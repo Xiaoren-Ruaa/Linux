@@ -1,66 +1,55 @@
-name: Stable ARM64 BusyBox RootFS (Static)
+name: ARM64 BusyBox RootFS (FINAL STABLE)
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
-    timeout-minutes: 60
+    runs-on: ubuntu-latest
 
     steps:
-    - name: Install dependencies
+    - name: Install toolchain
       run: |
         sudo apt update
-        sudo apt install -y \
-          build-essential \
-          wget \
-          bzip2 \
-          gcc-aarch64-linux-gnu
+        sudo apt install -y gcc-aarch64-linux-gnu wget
 
     - name: Download BusyBox
       run: |
         wget https://busybox.net/downloads/busybox-1.36.1.tar.bz2
         tar -xf busybox-1.36.1.tar.bz2
 
-    - name: Configure BusyBox (Stable Static)
+    - name: Configure BusyBox (Static)
       run: |
         cd busybox-1.36.1
         make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- defconfig
-
-        # 强制静态编译
+        
+        # 强制静态
         sed -i 's/# CONFIG_STATIC is not set/CONFIG_STATIC=y/' .config
-
-        make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
 
     - name: Build BusyBox
       run: |
         cd busybox-1.36.1
-        make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
+        make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -j2
 
-    - name: Install BusyBox to rootfs
+    - name: Install to rootfs
       run: |
         mkdir rootfs
         cd busybox-1.36.1
         make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CONFIG_PREFIX=../rootfs install
 
-    - name: Add basic system files
+    - name: Add basic files
       run: |
         mkdir -p rootfs/{proc,sys,dev,tmp,root}
         echo "root:x:0:0:root:/root:/bin/sh" > rootfs/etc/passwd
         echo "root:x:0:" > rootfs/etc/group
 
-    - name: Package RootFS
+    - name: Package
       run: |
         tar -czf busybox-rootfs-arm64.tar.gz rootfs
-
-    - name: Verify binary
-      run: |
         file rootfs/bin/busybox
-        ls -lh busybox-rootfs-arm64.tar.gz
 
-    - name: Upload Artifact
+    - name: Upload
       uses: actions/upload-artifact@v4
       with:
-        name: busybox-rootfs-arm64-stable
+        name: busybox-rootfs-arm64
         path: busybox-rootfs-arm64.tar.gz
