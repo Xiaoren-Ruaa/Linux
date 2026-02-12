@@ -1,0 +1,46 @@
+name: Build Linux ARM64 Kernel
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+
+    steps:
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y \
+          build-essential \
+          bc \
+          bison \
+          flex \
+          libssl-dev \
+          libelf-dev \
+          wget \
+          gcc-aarch64-linux-gnu
+
+    - name: Download Linux Kernel
+      run: |
+        wget https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.7.tar.xz
+        tar -xf linux-6.7.tar.xz
+
+    - name: Configure Kernel (ARM64)
+      run: |
+        cd linux-6.7
+        make ARCH=arm64 defconfig
+
+    - name: Build Kernel
+      run: |
+        cd linux-6.7
+        make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
+
+    - name: Upload Kernel Image
+      uses: actions/upload-artifact@v4
+      with:
+        name: arm64-kernel
+        path: |
+          linux-6.7/arch/arm64/boot/Image
+          linux-6.7/arch/arm64/boot/Image.gz
