@@ -1,4 +1,4 @@
-name: ARM64 Mini Linux ULTIMATE
+name: arm64-busybox
 
 on:
   workflow_dispatch:
