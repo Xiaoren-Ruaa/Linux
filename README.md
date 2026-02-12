@@ -7,6 +7,7 @@ Copyright (C) 2026 Xiaoren_Ruaa
 This project includes the Linux kernel which is licensed under
 GNU General Public License v2.0.
 
+##
 
 一个在termux通过QEMU运行的Linux系统喵
 
