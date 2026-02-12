@@ -1,0 +1,39 @@
+name: Build BusyBox ARM64
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+
+    steps:
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y \
+          build-essential \
+          wget \
+          gcc-aarch64-linux-gnu
+
+    - name: Download BusyBox
+      run: |
+        wget https://busybox.net/downloads/busybox-1.36.1.tar.bz2
+        tar -xf busybox-1.36.1.tar.bz2
+
+    - name: Configure BusyBox
+      run: |
+        cd busybox-1.36.1
+        make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- defconfig
+
+    - name: Build BusyBox
+      run: |
+        cd busybox-1.36.1
+        make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
+
+    - name: Upload BusyBox Binary
+      uses: actions/upload-artifact@v4
+      with:
+        name: busybox-arm64
+        path: busybox-1.36.1/busybox
