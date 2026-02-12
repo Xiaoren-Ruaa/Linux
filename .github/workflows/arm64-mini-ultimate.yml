@@ -1,4 +1,4 @@
-name: ARM64 Mini Linux ULTIMATE
+name: ARM64 Mini Linux FINAL
 
 on:
   workflow_dispatch:
@@ -9,6 +9,9 @@ jobs:
     timeout-minutes: 120
 
     steps:
+      ############################################################
+      # Install
+      ############################################################
       - name: Install dependencies
         run: |
           sudo apt update
@@ -22,9 +25,8 @@ jobs:
             e2fsprogs
 
       ############################################################
-      # BusyBox (STATIC - CI SAFE)
+      # BusyBox
       ############################################################
-
       - name: Download BusyBox
         run: |
           wget https://busybox.net/downloads/busybox-1.36.1.tar.bz2
@@ -33,15 +35,16 @@ jobs:
       - name: Build BusyBox Static
         run: |
           cd busybox-1.36.1
+
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- defconfig
 
           sed -i 's/.*CONFIG_STATIC.*/CONFIG_STATIC=y/' .config
           sed -i 's/CONFIG_TC=y/CONFIG_TC=n/' .config || true
           sed -i 's/CONFIG_WERROR=y/CONFIG_WERROR=n/' .config || true
 
-          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
+          yes "" | make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- oldconfig
 
-          sed -i 's/-Werror//g' Makefile
+          sed -i 's/-Werror//g' Makefile || true
 
           make -j$(nproc) ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
 
@@ -50,9 +53,8 @@ jobs:
             CONFIG_PREFIX=../rootfs install
 
       ############################################################
-      # Dropbear (STATIC)
+      # Dropbear
       ############################################################
-
       - name: Download Dropbear
         run: |
           wget https://matt.ucc.asn.au/dropbear/releases/dropbear-2022.83.tar.bz2
@@ -61,6 +63,7 @@ jobs:
       - name: Build Dropbear Static
         run: |
           cd dropbear-2022.83
+
           ./configure \
             --host=aarch64-linux-gnu \
             --disable-zlib \
@@ -74,9 +77,8 @@ jobs:
           cp dropbearmulti ../rootfs/usr/sbin/dropbear
 
       ############################################################
-      # Setup RootFS (NO HEREDOC)
+      # RootFS
       ############################################################
-
       - name: Setup RootFS
         run: |
           cd rootfs
@@ -90,14 +92,13 @@ jobs:
 
           mkdir -p etc/init.d
 
-          printf "#!/bin/sh\nmount -t proc none /proc\nmount -t sysfs none /sys\nmount -t devtmpfs none /dev\necho ARM64 Mini Linux ULTIMATE Ready\n" > etc/init.d/rcS
+          printf "#!/bin/sh\nmount -t proc none /proc\nmount -t sysfs none /sys\nmount -t devtmpfs none /dev\necho ARM64 Mini Linux FINAL Ready\n" > etc/init.d/rcS
 
           chmod +x etc/init.d/rcS
 
       ############################################################
-      # Create EXT4 Image (NO LOOP MOUNT)
+      # Create Image
       ############################################################
-
       - name: Create ext4 Image
         run: |
           mkdir image
@@ -113,13 +114,12 @@ jobs:
       ############################################################
       # Package
       ############################################################
-
       - name: Package
         run: |
-          tar -czf arm64-mini-ultimate.tar.gz arm64-rootfs.img
+          tar -czf arm64-mini-final.tar.gz arm64-rootfs.img
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: arm64-mini-ultimate
-          path: arm64-mini-ultimate.tar.gz
+          name: arm64-mini-final
+          path: arm64-mini-final.tar.gz
