@@ -8,6 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     env:
       INITRAMFS_DIR: ${{ github.workspace }}/initramfs
       OUTPUT_DIR: ${{ github.workspace }}/output
@@ -21,9 +22,13 @@ jobs:
         sudo apt update
         sudo apt install -y cpio gzip wget
 
-    - name: Prepare initramfs structure
+    - name: Prepare directories
       run: |
-        mkdir -p $INITRAMFS_DIR/{bin,proc,sys,dev,tmp,newroot}
+        mkdir -p $INITRAMFS_DIR/bin
+        mkdir -p $INITRAMFS_DIR/proc
+        mkdir -p $INITRAMFS_DIR/sys
+        mkdir -p $INITRAMFS_DIR/dev
+        mkdir -p $INITRAMFS_DIR/newroot
         mkdir -p $OUTPUT_DIR
 
     - name: Download prebuilt ARM64 BusyBox
@@ -36,7 +41,35 @@ jobs:
 
     - name: Add init script
       run: |
-        cp $GITHUB_WORKSPACE/init $INITRAMFS_DIR/
+        cat > $INITRAMFS_DIR/init << 'EOF'
+#!/bin/sh
+
+echo "Booting BusyBox initramfs..."
+
+mount -t proc none /proc
+mount -t sysfs none /sys
+mount -t devtmpfs none /dev
+
+mkdir /newroot
+
+echo "Mounting Alpine rootfs image..."
+
+mount -t ext4 /dev/vda /newroot
+
+if [ $? -ne 0 ]; then
+    echo "Mount failed!"
+    exec sh
+fi
+
+mount --move /proc /newroot/proc
+mount --move /sys /newroot/sys
+mount --move /dev /newroot/dev
+
+echo "Switching to Alpine..."
+
+exec switch_root /newroot /sbin/init
+EOF
+
         chmod +x $INITRAMFS_DIR/init
 
     - name: Build initramfs.cpio.gz
@@ -50,3 +83,9 @@ jobs:
 
     - name: Show output
       run: ls -lh $OUTPUT_DIR
+
+    - name: Upload initramfs artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: initramfs-arm64
+        path: ${{ env.OUTPUT_DIR }}/initramfs.cpio.gz
