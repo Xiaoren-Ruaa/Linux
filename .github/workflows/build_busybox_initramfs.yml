@@ -41,9 +41,9 @@ jobs:
         make defconfig
         # 设置静态编译
         sed -i 's/.*CONFIG_STATIC.*/CONFIG_STATIC=y/' .config
-        # 非交互式生成 include/autoconf.h
+        # 非交互生成 include/autoconf.h
         yes "" | make oldconfig
-        # ARM64 交叉编译
+        # ARM64 交叉编译，确保调用 aarch64-linux-gnu-ar
         make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
         # 拷贝 BusyBox 到 initramfs
         cp busybox ../busybox
