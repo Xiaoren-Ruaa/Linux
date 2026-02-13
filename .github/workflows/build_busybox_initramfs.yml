@@ -32,7 +32,7 @@ jobs:
         wget https://busybox.net/downloads/busybox-1.36.1.tar.bz2
         tar xjf busybox-1.36.1.tar.bz2
 
-    - name: Build BusyBox (ARM64 static)
+    - name: Build BusyBox (ARM64 static, non-interactive)
       run: |
         cd $INITRAMFS_DIR/bin/busybox-1.36.1
         # 清理旧配置
@@ -41,11 +41,11 @@ jobs:
         make defconfig
         # 设置静态编译
         sed -i 's/.*CONFIG_STATIC.*/CONFIG_STATIC=y/' .config
-        # 生成 include/autoconf.h
-        make oldconfig
+        # 非交互式生成 include/autoconf.h
+        make olddefconfig
         # 编译 BusyBox
         make -j$(nproc)
-        # 拷贝到 initramfs 根目录
+        # 拷贝生成的 BusyBox
         cp busybox ../busybox
         chmod +x ../busybox
         ln -sf busybox ../sh
