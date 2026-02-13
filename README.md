@@ -18,4 +18,4 @@ GNU General Public License v2.0.
 
 2-14  busybox--->initramfs ✅
       
-       alpine rootfs ✅
+ alpine rootfs ✅
