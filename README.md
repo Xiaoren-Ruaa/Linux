@@ -17,4 +17,4 @@ GNU General Public License v2.0.
 2026-2-13 编译kernel，busybox，并成功启动Linux
 
 2-14  busybox--->initramfs ✅
-         alpine rootfs ✅
+               alpine rootfs ✅
