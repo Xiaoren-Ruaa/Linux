@@ -1,4 +1,4 @@
-name: Build ARM64 Initramfs with BusyBox
+name: Build ARM64 Initramfs (Prebuilt BusyBox)
 
 on:
   push:
@@ -21,21 +21,21 @@ jobs:
         sudo apt update
         sudo apt install -y cpio gzip wget
 
-    - name: Prepare initramfs directories
+    - name: Prepare initramfs structure
       run: |
         mkdir -p $INITRAMFS_DIR/{bin,proc,sys,dev,tmp,newroot}
         mkdir -p $OUTPUT_DIR
 
-    - name: Download official ARM64 BusyBox binary
+    - name: Download prebuilt ARM64 BusyBox
       run: |
         cd $INITRAMFS_DIR/bin
-        wget -O busybox https://busybox.net/downloads/binaries/1.36.1-defconfig-multiarch/busybox-arm64
+        wget -O busybox https://raw.githubusercontent.com/shutingrz/busybox-static-binaries-fat/main/busybox-aarch64-linux-gnu
         chmod +x busybox
         ln -sf busybox sh
+        file busybox
 
     - name: Add init script
       run: |
-        # 假设你的 init 脚本已经放在仓库根目录
         cp $GITHUB_WORKSPACE/init $INITRAMFS_DIR/
         chmod +x $INITRAMFS_DIR/init
 
@@ -44,9 +44,9 @@ jobs:
         cd $INITRAMFS_DIR
         find . | cpio -o -H newc | gzip > $OUTPUT_DIR/initramfs.cpio.gz
 
-    - name: Verify initramfs contents
+    - name: Verify initramfs
       run: |
-        gzip -d -c $OUTPUT_DIR/initramfs.cpio.gz | cpio -t | grep -E "init|sh|busybox"
+        gzip -d -c $OUTPUT_DIR/initramfs.cpio.gz | cpio -t | grep -E "init|busybox|sh"
 
-    - name: List output files
+    - name: Show output
       run: ls -lh $OUTPUT_DIR
