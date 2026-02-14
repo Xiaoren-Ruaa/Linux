@@ -16,21 +16,27 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Install dependencies
+    - name: Install system dependencies
       run: |
         sudo apt update
         sudo apt install -y \
           git python3 python3-pip \
-          ninja-build meson pkg-config \
+          ninja-build pkg-config \
           libglib2.0-dev libfdt-dev libpixman-1-dev \
           zlib1g-dev libaio-dev \
           gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+    # ✅ 用 pip 安装最新版 meson
+    - name: Install latest Meson
+      run: |
+        pip3 install --upgrade meson
+        meson --version
 
     - name: Clone QEMU source
       run: |
         git clone --depth 1 https://github.com/qemu/qemu.git qemu-src
 
-    - name: Clean old build (safety)
+    - name: Clean old build
       run: |
         rm -rf qemu-build
 
@@ -54,7 +60,7 @@ jobs:
         ninja -j$(nproc)
         ninja install
 
-    - name: Verify binary architecture
+    - name: Verify binary
       run: |
         file ${{ env.PREFIX }}/bin/qemu-system-aarch64
         ls -lh ${{ env.PREFIX }}/bin
