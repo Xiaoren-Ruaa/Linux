@@ -1,0 +1,77 @@
+name: Build Latest Linux ARM64 Kernel (QEMU virt + full virtio)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 240
+
+    steps:
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y \
+          build-essential \
+          bc \
+          bison \
+          flex \
+          libssl-dev \
+          libelf-dev \
+          wget \
+          gcc-aarch64-linux-gnu \
+          libncurses-dev \
+          python3
+
+    - name: Download Latest Linux Kernel
+      run: |
+        # 获取最新 stable 版本号
+        LATEST=$(curl -s https://www.kernel.org/releases.json | python3 -c "import sys, json; print(json.load(sys.stdin)['latest_stable']['version'])")
+        echo "Latest stable kernel: $LATEST"
+        wget https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${LATEST}.tar.xz
+        tar -xf linux-${LATEST}.tar.xz
+
+    - name: Configure Kernel for QEMU virt
+      run: |
+        cd linux-*
+        make ARCH=arm64 virt_defconfig
+
+        # 启用常用 virtio 驱动和网络、块设备、console
+        scripts/config --enable VIRTIO
+        scripts/config --enable VIRTIO_PCI
+        scripts/config --enable VIRTIO_NET
+        scripts/config --enable VIRTIO_BLK
+        scripts/config --enable VIRTIO_BALLOON
+        scripts/config --enable VIRTIO_CONSOLE
+        scripts/config --enable VIRTIO_INPUT
+        scripts/config --enable VIRTIO_MMIO
+        scripts/config --enable VIRTIO_PCI_LEGACY
+        scripts/config --enable VIRTIO_SCSI
+        scripts/config --enable VIRTIO_FS
+        scripts/config --enable VIRTIO_MMIO_CMDLINE_DEVICES
+        scripts/config --enable VIRTIO_RNG
+        scripts/config --enable PCI
+        scripts/config --enable PCI_MSI
+        scripts/config --enable SCSI
+        scripts/config --enable IOMMU_API
+        scripts/config --enable IOMMU_SUPPORT
+        scripts/config --enable EXT4_FS
+        scripts/config --enable VIRTIO_BRIDGE
+        scripts/config --enable CRYPTO_AES
+        scripts/config --enable CRYPTO_SHA256
+
+        make ARCH=arm64 olddefconfig
+
+    - name: Build Kernel
+      run: |
+        cd linux-*
+        make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
+
+    - name: Upload Kernel Image
+      uses: actions/upload-artifact@v4
+      with:
+        name: arm64-kernel
+        path: |
+          linux-*/arch/arm64/boot/Image
+          linux-*/arch/arm64/boot/Image.gz
