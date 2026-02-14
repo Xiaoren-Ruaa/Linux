@@ -1,4 +1,4 @@
-name: Build QEMU 6.2 ARM64
+name: Build QEMU 6.2 ARM64 Stable
 
 on:
   workflow_dispatch:
@@ -13,13 +13,15 @@ jobs:
       PREFIX: ${{ github.workspace }}/qemu-arm64
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout
+      uses: actions/checkout@v4
 
     - name: Install dependencies
       run: |
         sudo apt update
         sudo apt install -y \
-          git build-essential \
+          git build-essential wget \
+          pkg-config \
           libglib2.0-dev libfdt-dev libpixman-1-dev \
           zlib1g-dev libaio-dev \
           gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
@@ -30,11 +32,16 @@ jobs:
         tar xf qemu-6.2.0.tar.xz
         mv qemu-6.2.0 qemu-src
 
-    - name: Configure
+    - name: Clean old build
+      run: |
+        rm -rf build
+
+    - name: Configure (Cross Compile ARM64)
       run: |
         mkdir build
         cd build
 
+        PKG_CONFIG=pkg-config \
         ../qemu-src/configure \
           --target-list=aarch64-softmmu \
           --cross-prefix=aarch64-linux-gnu- \
@@ -42,7 +49,9 @@ jobs:
           --enable-virtfs \
           --disable-werror \
           --disable-sdl \
-          --disable-cocoa
+          --disable-cocoa \
+          --disable-tools \
+          --disable-docs
 
     - name: Compile
       run: |
@@ -50,12 +59,13 @@ jobs:
         make -j$(nproc)
         make install
 
-    - name: Verify
+    - name: Verify Architecture
       run: |
         file ${{ env.PREFIX }}/bin/qemu-system-aarch64
         ls -lh ${{ env.PREFIX }}/bin
 
-    - uses: actions/upload-artifact@v4
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
       with:
-        name: qemu-system-aarch64
+        name: qemu-system-aarch64-arm64
         path: ${{ env.PREFIX }}/bin/qemu-system-aarch64
