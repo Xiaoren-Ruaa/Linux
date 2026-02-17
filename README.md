@@ -21,3 +21,7 @@ GNU General Public License v2.0.
  alpine rootfs ✅
 
  重整，放弃initramfs，直接在rootfs集成包管理器
+
+
+
+## 作者红温，停更
