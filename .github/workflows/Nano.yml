@@ -1,4 +1,4 @@
-name: Ultimate Nano 8.2 Final Stable
+name: Nano 8.2 Ultimate Hard-Static
 
 on:
   workflow_dispatch:
@@ -8,35 +8,33 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Install Toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu make wget
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu make wget
 
-      - name: Build Ncurses 6.5 (Static Core Only)
+      - name: Build Ncurses 6.5 (Static)
         run: |
           wget https://invisible-mirror.net/archives/ncurses/ncurses-6.5.tar.gz
           tar -xf ncurses-6.5.tar.gz
           cd ncurses-6.5
-          ./configure --host=aarch64-linux-gnu \
-                      --with-shared=no --enable-static --enable-widec --without-debug \
-                      CPPFLAGS="-P"
+          ./configure --host=aarch64-linux-gnu --with-shared=no --enable-static --enable-widec --without-debug CPPFLAGS="-P"
           make -j$(nproc)
-          # 关键：手动提取，不跑 make install，彻底解决 1000002290.jpg 的报错
           mkdir -p ../dist/lib ../dist/include/ncursesw
           cp lib/libncursesw.a ../dist/lib/
           cp include/*.h ../dist/include/ncursesw/
           cp include/*.h ../dist/include/
 
-      - name: Build Nano 8.2 (Full Feature Static)
+      - name: Build Nano 8.2 (Source Fix & Full Feature)
         run: |
           wget https://www.nano-editor.org/dist/v8/nano-8.2.tar.gz
           tar -xf nano-8.2.tar.gz
           cd nano-8.2
-          # 强制禁用导致链接报错的函数
+          # 【核心修复】直接在源码中屏蔽导致 1000002291.jpg 报错的系统头文件
+          sed -i 's/#include <pwd.h>/#undef HAVE_PWD_H/g' src/nano.h
+          
           ./configure --host=aarch64-linux-gnu \
                       CC="aarch64-linux-gnu-gcc -static" \
                       --enable-utf8 --enable-color --enable-extra --enable-nanorc \
                       --disable-nls --disable-libmagic \
+                      ac_cv_header_pwd_h=no \
                       ac_cv_func_getpwuid=no ac_cv_func_getpwnam=no ac_cv_func_getpwent=no \
                       cross_compiling=yes \
                       CPPFLAGS="-I$(pwd)/../dist/include -I$(pwd)/../dist/include/ncursesw" \
@@ -44,9 +42,3 @@ jobs:
                       LIBS="-lncursesw"
           make -j$(nproc)
           aarch64-linux-gnu-strip src/nano
-
-      - name: Upload Binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: nano-8.2-final
-          path: nano-8.2/src/nano
