@@ -1,4 +1,4 @@
-name: Build Fixed Full Nano 8.2
+name: Ultimate Nano 8.2 (Full & Stable)
 
 on:
   workflow_dispatch:
@@ -7,46 +7,45 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Install Toolchain
-        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu make wget
+      - name: Install Musl Toolchain
+        run: |
+          # 下载专用的 aarch64-linux-musl 交叉编译器
+          wget https://musl.cc/aarch64-linux-musl-cross.tgz
+          tar -xf aarch64-linux-musl-cross.tgz
+          echo "$(pwd)/aarch64-linux-musl-cross/bin" >> $GITHUB_PATH
 
-      - name: Build Ncurses 6.5 (Wide-character)
+      - name: Build Ncurses 6.5 (Musl Static)
         run: |
           wget https://invisible-mirror.net/archives/ncurses/ncurses-6.5.tar.gz
           tar -xf ncurses-6.5.tar.gz
           cd ncurses-6.5
-          ./configure --host=aarch64-linux-gnu --with-shared=no --enable-static --enable-widec --without-debug CPPFLAGS="-P"
+          CC=aarch64-linux-musl-gcc ./configure \
+            --host=aarch64-linux-musl \
+            --with-shared=no --enable-static --enable-widec \
+            --without-debug --prefix=$(pwd)/dist
           make -j$(nproc)
-          mkdir -p ../dist/lib ../dist/include
-          cp lib/libncursesw.a ../dist/lib/
-          cp include/*.h ../dist/include/
+          make install
 
-      - name: Build Nano 8.2 (No Glibc Dependency)
+      - name: Build Nano 8.2 (Full Feature Static)
         run: |
           wget https://www.nano-editor.org/dist/v8/nano-8.2.tar.gz
           tar -xf nano-8.2.tar.gz
           cd nano-8.2
-          # 核心修改：--disable-operating-dir 和 --disable-libmagic 减少链接依赖
-          # 增加 ac_cv_func_getpwuid=no 强制跳过导致截图 1000002287 报错的函数
-          ./configure --host=aarch64-linux-gnu \
-                      CC=aarch64-linux-gnu-gcc \
-                      --enable-utf8 \
-                      --enable-color \
-                      --enable-extra \
-                      --enable-nanorc \
-                      --enable-static \
-                      --disable-nls \
-                      ac_cv_func_getpwuid=no \
-                      ac_cv_func_getpwnam=no \
-                      cross_compiling=yes \
-                      CPPFLAGS="-I$(pwd)/../dist/include" \
-                      LDFLAGS="-static -L$(pwd)/../dist/lib" \
-                      LIBS="-lncursesw"
+          # 使用 musl-gcc 彻底避开截图 1000002288 中的 glibc 静态链接错误
+          # 禁用 getpwent 相关功能确保 100% 成功
+          CC=aarch64-linux-musl-gcc ./configure \
+            --host=aarch64-linux-musl \
+            --enable-utf8 --enable-color --enable-extra --enable-nanorc \
+            --disable-nls \
+            ac_cv_func_getpwuid=no ac_cv_func_getpwnam=no ac_cv_func_getpwent=no \
+            CPPFLAGS="-I$(pwd)/../ncurses-6.5/dist/include -I$(pwd)/../ncurses-6.5/dist/include/ncursesw" \
+            LDFLAGS="-static -L$(pwd)/../ncurses-6.5/dist/lib" \
+            LIBS="-lncursesw"
           make -j$(nproc)
-          aarch64-linux-gnu-strip src/nano
+          aarch64-linux-musl-strip src/nano
 
       - name: Upload Binary
         uses: actions/upload-artifact@v4
         with:
-          name: nano-fixed-full
+          name: nano-8.2-ultimate
           path: nano-8.2/src/nano
