@@ -1,4 +1,4 @@
-name: Build Single Binary Vim
+name: Build Hardcoded Full-Featured Vim
 
 on:
   workflow_dispatch:
@@ -17,30 +17,35 @@ jobs:
           cd ncurses-6.5
           ./configure --host=aarch64-linux-gnu --with-shared=no --enable-static --enable-widec --without-debug CPPFLAGS="-P"
           make -j$(nproc)
-          # 仅提取库文件供 Vim 链接
-          mkdir -p ../dist/lib ../dist/include
+          mkdir -p ../dist/lib ../dist/include/ncursesw
           cp lib/libncursesw.a ../dist/lib/
+          cp include/*.h ../dist/include/ncursesw/
           cp include/*.h ../dist/include/
 
-      - name: Build Vim (Standalone Binary)
+      - name: Build Vim (Hardcoded Runtime Path)
         run: |
           git clone --depth 1 https://github.com/vim/vim.git
           cd vim/src
-          # 关键：使用 --with-features=small 减少对外部 runtime 的依赖
+          # 【核心黑科技】将默认 Runtime 路径永久修改为手机上的 /data/local/tmp/runtime
+          sed -i 's|/usr/local/share/vim|/data/local/tmp|g' os_unix.h
+          
           ./configure --host=aarch64-linux-gnu \
                       CC=aarch64-linux-gnu-gcc \
-                      --with-tlib=ncursesw --enable-gui=no --with-features=small \
+                      --with-tlib=ncursesw --enable-gui=no \
+                      --with-features=huge \
+                      --enable-multibyte \
                       cross_compiling=yes \
                       ac_cv_sizeof_int=4 ac_cv_sizeof_long=8 ac_cv_sizeof_off_t=8 ac_cv_sizeof_voidp=8 \
-                      CPPFLAGS="-I$(pwd)/../../dist/include" \
-                      LDFLAGS="-static -L$(pwd)/../../dist/lib -Wl,-dynamic-linker,/system/bin/linker64" \
+                      CPPFLAGS="-I$(pwd)/../../dist/include -I$(pwd)/../../dist/include/ncursesw" \
+                      LDFLAGS="-static -L$(pwd)/../../dist/lib" \
                       LIBS="-lncursesw"
           make -j$(nproc)
-          # 极致压缩，删除所有调试符号
           aarch64-linux-gnu-strip vim
 
-      - name: Upload Binary
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: vim-standalone
-          path: vim/src/vim
+          name: vim-hardcoded-bundle
+          path: |
+            vim/src/vim
+            vim/runtime/
