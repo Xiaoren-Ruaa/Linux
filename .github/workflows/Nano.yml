@@ -1,4 +1,4 @@
-name: Ultimate Nano 8.2 Full (Official Toolchain)
+name: Ultimate Nano 8.2 Final Stable
 
 on:
   workflow_dispatch:
@@ -7,40 +7,40 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Install Official Musl Toolchain
+      - name: Install Toolchain
         run: |
           sudo apt-get update
-          # 直接安装官方仓库里的 musl 交叉编译器，解决 1000002289 的下载超时
-          sudo apt-get install -y musl-tools musl-dev gcc-aarch64-linux-gnu
+          sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu make wget
 
-      - name: Build Ncurses 6.5 (Wide-character Static)
+      - name: Build Ncurses 6.5 (Static Core Only)
         run: |
           wget https://invisible-mirror.net/archives/ncurses/ncurses-6.5.tar.gz
           tar -xf ncurses-6.5.tar.gz
           cd ncurses-6.5
-          # 使用 aarch64 交叉编译器配合 musl 标志
           ./configure --host=aarch64-linux-gnu \
-                      CC="aarch64-linux-gnu-gcc -static" \
-                      --with-shared=no --enable-static --enable-widec \
-                      --without-debug --prefix=$(pwd)/dist
+                      --with-shared=no --enable-static --enable-widec --without-debug \
+                      CPPFLAGS="-P"
           make -j$(nproc)
-          make install
+          # 关键：手动提取，不跑 make install，彻底解决 1000002290.jpg 的报错
+          mkdir -p ../dist/lib ../dist/include/ncursesw
+          cp lib/libncursesw.a ../dist/lib/
+          cp include/*.h ../dist/include/ncursesw/
+          cp include/*.h ../dist/include/
 
-      - name: Build Nano 8.2 (Standalone Full)
+      - name: Build Nano 8.2 (Full Feature Static)
         run: |
           wget https://www.nano-editor.org/dist/v8/nano-8.2.tar.gz
           tar -xf nano-8.2.tar.gz
           cd nano-8.2
-          # 增加 --disable-libmagic 以减少不必要的静态链接复杂性
-          # 强制禁用 pwd 函数以修复 1000002287 和 1000002288 的链接报错
+          # 强制禁用导致链接报错的函数
           ./configure --host=aarch64-linux-gnu \
                       CC="aarch64-linux-gnu-gcc -static" \
                       --enable-utf8 --enable-color --enable-extra --enable-nanorc \
                       --disable-nls --disable-libmagic \
                       ac_cv_func_getpwuid=no ac_cv_func_getpwnam=no ac_cv_func_getpwent=no \
                       cross_compiling=yes \
-                      CPPFLAGS="-I$(pwd)/../ncurses-6.5/dist/include -I$(pwd)/../ncurses-6.5/dist/include/ncursesw" \
-                      LDFLAGS="-static -L$(pwd)/../ncurses-6.5/dist/lib" \
+                      CPPFLAGS="-I$(pwd)/../dist/include -I$(pwd)/../dist/include/ncursesw" \
+                      LDFLAGS="-static -L$(pwd)/../dist/lib" \
                       LIBS="-lncursesw"
           make -j$(nproc)
           aarch64-linux-gnu-strip src/nano
@@ -48,5 +48,5 @@ jobs:
       - name: Upload Binary
         uses: actions/upload-artifact@v4
         with:
-          name: nano-8.2-standalone
+          name: nano-8.2-final
           path: nano-8.2/src/nano
