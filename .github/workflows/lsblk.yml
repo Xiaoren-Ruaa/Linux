@@ -1,4 +1,4 @@
-name: Build Dynamic lsblk for Custom System Libs
+name: Build Custom Dynamic lsblk
 
 on:
   workflow_dispatch:
@@ -25,40 +25,43 @@ jobs:
           ./autogen.sh
           
           export CC=aarch64-linux-gnu-gcc
-          # 关键点：设置 RPATH 让程序去 /system/lib64 找库
-          # 并且通过 LDFLAGS 允许未定义的符号在运行时解析
+          # 核心链接参数：
+          # 1. -Wl,-rpath 指定运行时库搜索路径
+          # 2. --dynamic-linker 指定 Android 64位链接器路径
           export LDFLAGS="-Wl,-rpath=/system/lib64 -Wl,--dynamic-linker=/system/bin/linker64"
 
           ./configure \
             --host=aarch64-linux-gnu \
             --disable-all-programs \
             --enable-lsblk \
-            --enable-libblkid \
-            --enable-libmount \
-            --enable-libsmartcols \
-            --disable-static \
             --enable-shared \
+            --disable-static \
             --without-udev \
             --without-ncurses \
-            --without-python \
+            --without-ncursesw \
             --without-tinfo \
+            --without-readline \
+            --without-python \
             --without-cap-ng \
+            --without-libz \
+            --without-libmagic \
             --disable-bash-completion \
-            --disable-nls
+            --disable-nls \
+            --disable-widechar
 
-          # 我们只需要 lsblk 程序本身
+          # 只编译 lsblk
           make lsblk -j$(nproc)
           
-          # 瘦身
+          # 移除调试符号，确保体积最小
           aarch64-linux-gnu-strip lsblk
 
-      - name: Verify Linkage
+      - name: Check Dependencies
         run: |
-          # 检查动态链接依赖
+          # 验证生成的文件是否只依赖了你想要的那三个库
           aarch64-linux-gnu-readelf -d lsblk | grep NEEDED
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lsblk-android-dynamic
+          name: lsblk-custom-dynamic
           path: lsblk
