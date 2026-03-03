@@ -1,4 +1,4 @@
-name: Build All Four Core Libs (Full Fix v7)
+name: Build All Four Core Libs (Full Fix v8)
 
 on:
   workflow_dispatch:
@@ -27,37 +27,27 @@ jobs:
           export CC=$TOOLCHAIN/bin/$TARGET-clang
           export STRIP=$TOOLCHAIN/bin/llvm-strip
 
-          # --- 1. 创建兼容性补丁头文件 (解决图 3454, 3456, 3457) ---
-          cat <<EOF > android_compat.h
-          #ifndef ANDROID_COMPAT_H
-          #define ANDROID_COMPAT_H
+          # --- 1. 修复源码中的硬伤，但不干扰 configure ---
+          # 修复 versionsort (图 3447)
+          sed -i 's/versionsort/alphasort/g' libmount/src/tab_parse.c
+          
+          # 为 shells.c 增加缺失的头文件引用，防止隐式声明冲突
+          sed -i '1i #include <stdio.h>\n#include <string.h>' lib/shells.c
+
+          # --- 2. 核心补丁：直接注入 libcommon (所有库都会链接它) ---
+          # 这样可以确保 strverscmp 符号被包含在最终的 .so 中
+          cat <<EOF >> lib/strutils.c
           #include <string.h>
-          #include <stdlib.h>
-
-          // 修复 strverscmp 缺失
-          static inline int strverscmp(const char *s1, const char *s2) {
-              return strcmp(s1, s2);
-          }
-
-          // 修复 Shell 相关存根，使用 static inline 避免冲突
-          static inline void setusershell(void) {}
-          static inline void endusershell(void) {}
-          static inline char *getusershell(void) { return NULL; }
-
-          // 修复 versionsort 映射
-          #define versionsort alphasort
-          #endif
+          int strverscmp(const char *s1, const char *s2) { return strcmp(s1, s2); }
+          void setusershell(void) {}
+          void endusershell(void) {}
+          char *getusershell(void) { return NULL; }
           EOF
 
-          # --- 2. 修改配置参数，强制注入补丁 ---
-          # 通过 CFLAGS 注入头文件，解决符号缺失
-          export CFLAGS="-include $(pwd)/android_compat.h -Wno-implicit-function-declaration"
-          # 强制链接参数，确保库文件在 /system/lib64 下能找到
+          # --- 3. 配置与编译 ---
+          # 移除之前的 -include 参数，改回干净的 CFLAGS
+          export CFLAGS="-Wno-implicit-function-declaration -Wno-int-conversion"
           export LDFLAGS="-Wl,-rpath=/system/lib64 -Wl,--dynamic-linker=/system/bin/linker64 -Wl,--allow-shlib-undefined"
-
-          # --- 3. 针对 libmount 监控功能的特殊处理 ---
-          echo "int mnt_monitor_enable_fanotify(void *mn, int enable) { return -1; }" > libmount/src/monitor_fanotify.c
-          echo "int mnt_monitor_get_fanotify_fd(void *mn) { return -1; }" >> libmount/src/monitor_fanotify.c
 
           ./configure --host=aarch64-linux-android \
                       --prefix=/system \
@@ -75,30 +65,27 @@ jobs:
                       --disable-libmount-mountfd-support \
                       --disable-monitor-fanotify
 
+          # 强制重新生成相关的 C 文件
           make -j$(nproc)
 
-          # --- 4. 提取与重构产物 ---
+          # --- 4. 产物提取与版本伪装 ---
           mkdir -p output/lib64
           for lib in uuid blkid mount smartcols; do
-            cp -d .libs/lib${lib}.so* output/lib64/
+            # 拷贝 .so 实体
+            cp .libs/lib${lib}.so output/lib64/lib${lib}.so
+            # 建立手机系统寻找的特定软链接
+            ln -sf lib${lib}.so output/lib64/lib${lib}.so.1
           done
           
-          # 提取新编译的 lsblk，它将依赖这些新库
+          # 提取新编译的 lsblk
           cp .libs/lsblk output/
           
-          # 自动补全 .so.1 软链接，这是 Android 运行必需的
-          cd output/lib64
-          for f in *.so; do 
-            if [ ! -L "${f}.1" ]; then ln -sf "$f" "${f}.1"; fi
-          done
-          cd ../..
-
-          # 瘦身
+          # 瘦身处理
+          find output/lib64/ -type f -name "*.so" -exec $STRIP --strip-unneeded {} +
           $STRIP output/lsblk
-          $STRIP output/lib64/*.so* || true
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: util-linux-libs-ultimate-fix
+          name: util-linux-libs-v8-final
           path: output/
