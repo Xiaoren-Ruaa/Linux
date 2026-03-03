@@ -1,19 +1,20 @@
-name: Build Static lsblk (Multi-Arch)
+name: Build Static lsblk
 
 on:
-  workflow_dispatch: # 手动点击 Run workflow 触发
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # 同时定义两个架构
         include:
           - arch: aarch64
-            target: aarch64-linux-musl
+            gcc_pkg: gcc-aarch64-linux-gnu
+            host_triplet: aarch64-linux-gnu
           - arch: x86_64
-            target: x86_64-linux-musl
+            gcc_pkg: gcc
+            host_triplet: x86_64-linux-gnu
 
     steps:
       - name: Checkout util-linux
@@ -22,33 +23,34 @@ jobs:
           repository: util-linux/util-linux
           fetch-depth: 1
 
-      - name: Install Build Dependencies
+      - name: Install Build Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y autoconf automake libtool pkg-config bison flex gettext autopoint
+          sudo apt-get install -y \
+            autoconf \
+            automake \
+            libtool \
+            pkg-config \
+            bison \
+            flex \
+            gettext \
+            autopoint \
+            ${{ matrix.gcc_pkg }}
 
-      # 使用专用 Action 快速安装稳定的 musl 交叉编译器
-      - name: Setup musl-gcc
-        uses: xavier-niu/setup-musl@v1
-        with:
-          arch: ${{ matrix.arch }}
-
-      - name: Build lsblk
+      - name: Configure and Build
         run: |
           ./autogen.sh
           
-          # 设置编译器变量
+          # 设置编译器
           if [ "${{ matrix.arch }}" = "aarch64" ]; then
-            export CROSS_COMPILE=aarch64-linux-musl-
+            export CC=aarch64-linux-gnu-gcc
           else
-            export CROSS_COMPILE=x86_64-linux-musl-
+            export CC=gcc
           fi
-          
-          export CC="${CROSS_COMPILE}gcc"
-          
-          # 核心配置：禁用不必要的模块，强制静态链接
+
+          # 针对 Android /system/bin 优化的全静态配置
           ./configure \
-            --host=${{ matrix.target }} \
+            --host=${{ matrix.host_triplet }} \
             LDFLAGS="-static" \
             --disable-all-programs \
             --enable-lsblk \
@@ -63,14 +65,17 @@ jobs:
             --disable-bash-completion \
             --disable-nls
 
-          # 编译 lsblk，它会自动处理内部依赖库的静态编译
           make lsblk -j$(nproc)
           
-          # 使用对应的 strip 工具压缩体积
-          ${CROSS_COMPILE}strip lsblk
+          # 移除符号表减小体积
+          if [ "${{ matrix.arch }}" = "aarch64" ]; then
+            aarch64-linux-gnu-strip lsblk
+          else
+            strip lsblk
+          fi
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lsblk-${{ matrix.arch }}-static
+          name: lsblk-${{ matrix.arch }}
           path: lsblk
