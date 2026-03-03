@@ -1,4 +1,4 @@
-name: Build Android 13 Shared Libs (Master-Fix)
+name: Build Android 13 Shared Libs (Success-Final)
 
 on:
   workflow_dispatch:
@@ -58,16 +58,13 @@ jobs:
           #endif
           EOF
 
-          # --- 注入补丁到源码 ---
-          # 修复 shell 缺失
+          # --- 注入补丁 ---
           sed -i '1i void setusershell(void) {}' lib/shells.c
           sed -i '1i void endusershell(void) {}' lib/shells.c
           sed -i '1i char *getusershell(void) { return 0; }' lib/shells.c
-
-          # 注入全能补丁到 libmount 核心解析文件
           sed -i '1i #include "android_fix.h"' libmount/src/tab_parse.c
 
-          # 配置参数
+          # --- 配置参数：新增禁用 fanotify 解决图 1000003245 报错 ---
           ./configure --host=aarch64-linux-android \
                       --prefix=/system \
                       --enable-shared \
@@ -91,7 +88,9 @@ jobs:
                       --disable-login \
                       --disable-su \
                       --disable-runuser \
-                      --disable-newgrp
+                      --disable-newgrp \
+                      --disable-libmount-mountfd-support \
+                      --disable-libmount-support-monitor # 关键：彻底解决 fanotify 缺失
 
           make -j$(nproc)
           
@@ -107,7 +106,6 @@ jobs:
           cp libblkid/libblkid.pc output/pkgconfig/
           cp uuid/libuuid.pc output/pkgconfig/
           
-          # 瘦身
           find output/lib64/ -type f -name "*.so*" -exec $STRIP --strip-unneeded {} +
 
       - name: Upload Artifact
