@@ -1,4 +1,4 @@
-name: Build Android 13 Shared Libs (Master-Fix-V2)
+name: Build Android 13 Shared Libs (Final-Master-Success)
 
 on:
   workflow_dispatch:
@@ -28,7 +28,7 @@ jobs:
           export AR=$TOOLCHAIN/bin/llvm-ar
           export STRIP=$TOOLCHAIN/bin/llvm-strip
 
-          # --- 核心攻克：创建全能补丁头文件 ---
+          # --- 核心补丁集 ---
           cat <<EOF > android_fix.h
           #ifndef ANDROID_FIX_H
           #define ANDROID_FIX_H
@@ -50,20 +50,18 @@ jobs:
           #endif
           EOF
 
-          # --- 注入补丁与暴力修复 ---
-          # 1. 修复 shell 缺失
+          # 1. 修复 shell 和 versionsort
           sed -i '1i void setusershell(void) {}' lib/shells.c
           sed -i '1i void endusershell(void) {}' lib/shells.c
           sed -i '1i char *getusershell(void) { return 0; }' lib/shells.c
-
-          # 2. 注入核心补丁
           sed -i '1i #include "android_fix.h"' libmount/src/tab_parse.c
 
-          # 3. 终极暴力：彻底解决 fanotify.h 报错 (针对图 1000003246)
-          # 直接清空该文件，使其不产生任何代码
-          echo "// Cleared for Android Build" > libmount/src/monitor_fanotify.c
+          # 2. 彻底移除 fanotify 逻辑和符号定义 (解决图 1000003408 链接报错)
+          echo "// Removed for Android" > libmount/src/monitor_fanotify.c
+          # 从符号导出表中删除 fanotify 相关条目，防止链接器报错
+          sed -i '/mnt_monitor_enable_fanotify/d' libmount/src/libmount.sym
+          sed -i '/mnt_monitor_get_fanotify_fd/d' libmount/src/libmount.sym
 
-          # 配置参数
           ./configure --host=aarch64-linux-android \
                       --prefix=/system \
                       --enable-shared \
@@ -81,7 +79,6 @@ jobs:
                       --without-ncurses \
                       --without-selinux \
                       --disable-widechar \
-                      --disable-use-tty-group \
                       --disable-makeinstall-chown \
                       --disable-chfn-chsh \
                       --disable-login \
@@ -93,18 +90,15 @@ jobs:
 
           make -j$(nproc)
           
-          # 整理产物
           mkdir -p output/lib64
           mkdir -p output/pkgconfig
           cp -d .libs/libmount.so* output/lib64/
           cp -d .libs/libblkid.so* output/lib64/
           cp -d .libs/libuuid.so* output/lib64/
           cp -d .libs/libsmartcols.so* output/lib64/
-          
           cp libmount/libmount.pc output/pkgconfig/
           cp libblkid/libblkid.pc output/pkgconfig/
           cp uuid/libuuid.pc output/pkgconfig/
-          
           find output/lib64/ -type f -name "*.so*" -exec $STRIP --strip-unneeded {} +
 
       - name: Upload Artifact
