@@ -1,4 +1,4 @@
-name: Build All Four Core Libs (Full Fix v8)
+name: Build All Four Core Libs (Full Fix v9)
 
 on:
   workflow_dispatch:
@@ -18,6 +18,26 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gettext bison flex autopoint build-essential pkg-config libtool autoconf automake
 
+      - name: Pre-build Source Surgery
+        run: |
+          # 1. 彻底清空 monitor_fanotify.c 的内容，防止其包含不存在的 sys/fanotify.h (解决图 3459)
+          echo "/* Cleaned for Android */" > libmount/src/monitor_fanotify.c
+          echo "int mnt_monitor_enable_fanotify(void *mn, int enable) { return -1; }" >> libmount/src/monitor_fanotify.c
+          echo "int mnt_monitor_get_fanotify_fd(void *mn) { return -1; }" >> libmount/src/monitor_fanotify.c
+
+          # 2. 移除 Makefile 模板中对 fanotify 的依赖，确保不会被再次编译
+          sed -i 's/monitor_fanotify.c//g' libmount/src/Makemodule.am
+
+          # 3. 修复 versionsort 和 shells 相关符号 (解决图 3447, 3454, 3456)
+          sed -i 's/versionsort/alphasort/g' libmount/src/tab_parse.c
+          cat <<EOF >> lib/strutils.c
+          #include <string.h>
+          int strverscmp(const char *s1, const char *s2) { return strcmp(s1, s2); }
+          void setusershell(void) {}
+          void endusershell(void) {}
+          char *getusershell(void) { return (char *)0; }
+          EOF
+
       - name: Build Core Libraries
         run: |
           ./autogen.sh
@@ -27,25 +47,6 @@ jobs:
           export CC=$TOOLCHAIN/bin/$TARGET-clang
           export STRIP=$TOOLCHAIN/bin/llvm-strip
 
-          # --- 1. 修复源码中的硬伤，但不干扰 configure ---
-          # 修复 versionsort (图 3447)
-          sed -i 's/versionsort/alphasort/g' libmount/src/tab_parse.c
-          
-          # 为 shells.c 增加缺失的头文件引用，防止隐式声明冲突
-          sed -i '1i #include <stdio.h>\n#include <string.h>' lib/shells.c
-
-          # --- 2. 核心补丁：直接注入 libcommon (所有库都会链接它) ---
-          # 这样可以确保 strverscmp 符号被包含在最终的 .so 中
-          cat <<EOF >> lib/strutils.c
-          #include <string.h>
-          int strverscmp(const char *s1, const char *s2) { return strcmp(s1, s2); }
-          void setusershell(void) {}
-          void endusershell(void) {}
-          char *getusershell(void) { return NULL; }
-          EOF
-
-          # --- 3. 配置与编译 ---
-          # 移除之前的 -include 参数，改回干净的 CFLAGS
           export CFLAGS="-Wno-implicit-function-declaration -Wno-int-conversion"
           export LDFLAGS="-Wl,-rpath=/system/lib64 -Wl,--dynamic-linker=/system/bin/linker64 -Wl,--allow-shlib-undefined"
 
@@ -63,29 +64,25 @@ jobs:
                       --without-udev \
                       --without-ncurses \
                       --disable-libmount-mountfd-support \
-                      --disable-monitor-fanotify
+                      --disable-monitor-fanotify \
+                      --disable-monitor-utab
 
-          # 强制重新生成相关的 C 文件
           make -j$(nproc)
 
-          # --- 4. 产物提取与版本伪装 ---
+          # --- 提取与重构产物 ---
           mkdir -p output/lib64
           for lib in uuid blkid mount smartcols; do
-            # 拷贝 .so 实体
-            cp .libs/lib${lib}.so output/lib64/lib${lib}.so
-            # 建立手机系统寻找的特定软链接
+            cp .libs/lib${lib}.so output/lib64/
+            # 建立 Android 必需的 .so.1 软链接
             ln -sf lib${lib}.so output/lib64/lib${lib}.so.1
           done
           
-          # 提取新编译的 lsblk
           cp .libs/lsblk output/
-          
-          # 瘦身处理
           find output/lib64/ -type f -name "*.so" -exec $STRIP --strip-unneeded {} +
           $STRIP output/lsblk
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: util-linux-libs-v8-final
+          name: util-linux-libs-v9-surgery
           path: output/
