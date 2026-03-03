@@ -1,4 +1,4 @@
-name: Build NDK-Native lsblk (Final Fix)
+name: Build NDK-Native lsblk (Final Fix v2)
 
 on:
   workflow_dispatch:
@@ -25,12 +25,15 @@ jobs:
 
       - name: Patch NDK Compatibility
         run: |
-          # 修复 getusershell/endusershell (图 3446 报错)
+          # 1. 修复 getusershell/endusershell (图 3446 报错)
           sed -i '1i #define getusershell() (NULL)\n#define endusershell() ((void)0)' lib/shells.c
           
-          # 修复 versionsort 缺失 (图 3447 报错)
-          # 将 versionsort 替换为 Android 存在的 alphasort
+          # 2. 修复 versionsort 缺失 (图 3447 报错)
           sed -i 's/versionsort/alphasort/g' libmount/src/tab_parse.c
+
+          # 3. 强力修复 sys/fanotify.h 缺失 (图 3448, 3449 报错)
+          # 直接清空该文件内容，使其变成一个空的编译单元，从而绕过头文件检查
+          echo "/* patched */" > libmount/src/monitor_fanotify.c
 
       - name: Configure and Build
         run: |
@@ -60,17 +63,17 @@ jobs:
             --disable-nls \
             --disable-widechar \
             --disable-libmount-mountfd-support \
-            --disable-monitor-fanotify # 关键：解决图 3448 的 sys/fanotify.h 缺失问题
+            --disable-monitor-fanotify
 
           # 编译
           make lsblk -j$(nproc)
           
-          # 提取 ELF 真身并瘦身
+          # 提取 ELF 真身并重命名为 lsblk
           cp .libs/lsblk lsblk
           $TOOLCHAIN/bin/llvm-strip lsblk
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lsblk-ndk-final
+          name: lsblk-ndk-v2
           path: lsblk
