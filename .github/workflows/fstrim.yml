@@ -1,0 +1,61 @@
+name: Build Static AArch64 fstrim
+
+on: [push, workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+        with:
+          repository: util-linux/util-linux
+          fetch-depth: 1
+
+      - name: Setup Build Environment
+        run: |
+          sudo apt-get update
+          # 安装 AArch64 交叉编译工具链和必要工具
+          sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+                                 autoconf automake libtool pkg-config gettext bison flex
+
+      - name: Build Static Dependencies
+        run: |
+          # 这一步是关键：我们需要针对 AArch64 编译静态依赖，而不是使用 Ubuntu 自带的 x86 库
+          # 1. 编译并安装全静态 libmount 依赖链
+          ./autogen.sh
+          ./configure --host=aarch64-linux-gnu \
+                      CC=aarch64-linux-gnu-gcc \
+                      LDFLAGS="-static" \
+                      --enable-static \
+                      --disable-shared \
+                      --disable-all-programs \
+                      --enable-libmount \
+                      --enable-libblkid \
+                      --enable-libuuid \
+                      --without-ncurses \
+                      --without-python
+          make -j$(nproc)
+
+      - name: Final Compilation of fstrim
+        run: |
+          # 2. 编译最终的 fstrim 程序
+          ./configure --host=aarch64-linux-gnu \
+                      CC=aarch64-linux-gnu-gcc \
+                      LDFLAGS="-static" \
+                      --enable-static \
+                      --disable-shared \
+                      --disable-all-programs \
+                      --enable-fstrim \
+                      --without-ncurses \
+                      --without-python
+          make fstrim
+          
+          # 3. 极致瘦身：使用交叉编译版的 strip 移除所有调试符号
+          aarch64-linux-gnu-strip fstrim
+
+      - name: Upload fstrim Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: fstrim-android-aarch64
+          path: fstrim
