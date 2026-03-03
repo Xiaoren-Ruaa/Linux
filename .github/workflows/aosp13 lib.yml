@@ -1,4 +1,4 @@
-name: Build Android 13 Shared Libs (Ultimate-Final)
+name: Build Android 13 Shared Libs (Final-Absolute)
 
 on:
   workflow_dispatch:
@@ -22,25 +22,37 @@ jobs:
         run: |
           ./autogen.sh
           
-          # 设置 NDK 环境
           export TOOLCHAIN=$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64
           export TARGET=aarch64-linux-android33
           export CC=$TOOLCHAIN/bin/$TARGET-clang
           export AR=$TOOLCHAIN/bin/llvm-ar
           export STRIP=$TOOLCHAIN/bin/llvm-strip
 
-          # --- 核心补丁：修复 Android Bionic 缺失函数 ---
+          # --- 核心攻克：暴力补丁集 ---
           
-          # 1. 修复 shell 相关缺失
+          # 1. 修复 shell 缺失
           sed -i '1i void setusershell(void) {}' lib/shells.c
           sed -i '1i void endusershell(void) {}' lib/shells.c
           sed -i '1i char *getusershell(void) { return 0; }' lib/shells.c
 
-          # 2. 修复 versionsort 缺失 (解决图 1000003240 报错)
-          # 我们直接把这个函数定义注入到用到它的源文件中
-          sed -i '1i #include <string.h>\nint versionsort(const struct dirent **a, const struct dirent **b) { return strverscmp((*a)->d_name, (*b)->d_name); }' libmount/src/tab_parse.c
+          # 2. 修复 versionsort 和 scandirat 类型冲突 (解决图 1000003241 报错)
+          # 我们定义一个兼容 Android 的 versionsort，并强制转换 scandirat 的参数类型
+          cat <<EOF > android_fix.h
+          #include <dirent.h>
+          #include <string.h>
+          #include <sys/types.h>
+          int versionsort(const struct dirent **a, const struct dirent **b) {
+              return strverscmp((*a)->d_name, (*b)->d_name);
+          }
+          #define scandirat(fd, dir, namelist, filter, compar) \
+              scandirat(fd, dir, namelist, (int (*)(const struct dirent *))filter, \
+              (int (*)(const struct dirent **, const struct dirent **))compar)
+          EOF
 
-          # 配置参数
+          # 将补丁注入到报错的核心文件顶端
+          sed -i '1i #include "android_fix.h"' libmount/src/tab_parse.c
+
+          # 配置参数：禁用所有不兼容的边缘程序，专注核心库
           ./configure --host=aarch64-linux-android \
                       --prefix=/system \
                       --enable-shared \
@@ -71,18 +83,14 @@ jobs:
           # 整理产物
           mkdir -p output/lib64
           mkdir -p output/pkgconfig
-          
-          # 拷贝并保留链接
           cp -d .libs/libmount.so* output/lib64/
           cp -d .libs/libblkid.so* output/lib64/
           cp -d .libs/libuuid.so* output/lib64/
           cp -d .libs/libsmartcols.so* output/lib64/
-          
           cp libmount/libmount.pc output/pkgconfig/
           cp libblkid/libblkid.pc output/pkgconfig/
           cp uuid/libuuid.pc output/pkgconfig/
           
-          # 对真实文件瘦身
           find output/lib64/ -type f -name "*.so*" -exec $STRIP --strip-unneeded {} +
 
       - name: Upload Artifact
