@@ -1,4 +1,4 @@
-name: Build All Four Core Libs (Full Fix v10)
+name: Rebuild Four Core Libs Only (System Replacement)
 
 on:
   workflow_dispatch:
@@ -18,31 +18,38 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gettext bison flex autopoint build-essential pkg-config libtool autoconf automake
 
-      - name: Pre-build Source Surgery
+      - name: Inject Compatibility Symbols
         run: |
-          # 1. 彻底禁用 libmount 的符号版本脚本，这是解决图 3460 报错的关键
-          # 我们直接把 .sym 文件清空，让它没有要强制检查的符号
+          # 1. 禁用符号版本脚本，防止图 3460 的链接强制约束错误
           find . -name "*.sym" -exec truncate -s 0 {} +
           
-          # 2. 物理移除 monitor_fanotify.c 依赖并清空内容 (修复图 3459)
-          echo "/* Cleaned for Android */" > libmount/src/monitor_fanotify.c
-          # 注入空实现以满足内部引用
-          cat <<EOF >> libmount/src/monitor_fanotify.c
-          int mnt_monitor_enable_fanotify(void *mn, int enable) { return -1; }
-          int mnt_monitor_get_fanotify_fd(void *mn) { return -1; }
-          EOF
-
-          # 3. 修复 versionsort 和 shells 符号 (修复图 3447, 3454, 3456)
+          # 2. 修复 versionsort 缺失 (图 3447)
           sed -i 's/versionsort/alphasort/g' libmount/src/tab_parse.c
+
+          # 3. 核心：在 lib/strutils.c 中手动植入 strverscmp 实现 (修复图 3454)
+          # 这样编译出的每个 .so 都会自带这个符号，不再依赖系统 Bionic
           cat <<EOF >> lib/strutils.c
           #include <string.h>
-          int strverscmp(const char *s1, const char *s2) { return strcmp(s1, s2); }
+          #include <ctype.h>
+          int strverscmp(const char *s1, const char *s2) {
+              const unsigned char *p1 = (const unsigned char *) s1;
+              const unsigned char *p2 = (const unsigned char *) s2;
+              unsigned char c1, c2;
+              while ((c1 = *p1++) == (c2 = *p2++) && c1 != '\0');
+              if (c1 == '\0' && c2 == '\0') return 0;
+              return c1 - c2; 
+          }
+          // 同时补全图 3446/3452 缺失的 shell 存根
           void setusershell(void) {}
           void endusershell(void) {}
           char *getusershell(void) { return (char *)0; }
           EOF
 
-      - name: Build Core Libraries
+          # 4. 物理移除 monitor_fanotify 依赖 (修复图 3459)
+          echo "int mnt_monitor_enable_fanotify(void *mn, int e) { return -1; }" > libmount/src/monitor_fanotify.c
+          echo "int mnt_monitor_get_fanotify_fd(void *mn) { return -1; }" >> libmount/src/monitor_fanotify.c
+
+      - name: Build Libraries
         run: |
           ./autogen.sh
           
@@ -52,8 +59,8 @@ jobs:
           export STRIP=$TOOLCHAIN/bin/llvm-strip
 
           export CFLAGS="-Wno-implicit-function-declaration -Wno-int-conversion"
-          # 增加 --undefined-version 告诉链接器忽略版本脚本中的缺失符号
-          export LDFLAGS="-Wl,-rpath=/system/lib64 -Wl,--dynamic-linker=/system/bin/linker64 -Wl,--allow-shlib-undefined -Wl,--undefined-version"
+          # 强制链接参数，确保库可以独立运行
+          export LDFLAGS="-Wl,-rpath=/system/lib64 -Wl,--allow-shlib-undefined -Wl,--undefined-version"
 
           ./configure --host=aarch64-linux-android \
                       --prefix=/system \
@@ -64,32 +71,30 @@ jobs:
                       --enable-libblkid \
                       --enable-libmount \
                       --enable-libsmartcols \
-                      --disable-bash-completion \
                       --without-python \
                       --without-udev \
                       --without-ncurses \
                       --disable-libmount-mountfd-support \
-                      --disable-monitor-fanotify \
-                      --disable-monitor-utab
+                      --disable-monitor-fanotify
 
-          # 移除 Makefile 中所有指向符号脚本的参数，双重保险
+          # 移除 Makefile 中干扰链接的符号脚本参数
           find . -name "Makefile" -exec sed -i 's/--version-script//g' {} +
 
-          make -j$(nproc)
+          # 只编译库目标
+          make -j$(nproc) libuuid.la libblkid.la libmount.la libsmartcols.la
 
           # --- 提取产物 ---
           mkdir -p output/lib64
           for lib in uuid blkid mount smartcols; do
             cp .libs/lib${lib}.so output/lib64/
+            # 建立系统需要的软链接
             ln -sf lib${lib}.so output/lib64/lib${lib}.so.1
           done
           
-          cp .libs/lsblk output/
           find output/lib64/ -type f -name "*.so" -exec $STRIP --strip-unneeded {} +
-          $STRIP output/lsblk
 
-      - name: Upload Artifact
+      - name: Upload Libraries
         uses: actions/upload-artifact@v4
         with:
-          name: util-linux-libs-v10-final
+          name: util-linux-libs-only-v12
           path: output/
