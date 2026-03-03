@@ -1,0 +1,71 @@
+name: Build Static lsblk
+
+on:
+  workflow_dispatch: # 手动触发编译
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [x86_64, aarch64]
+        include:
+          - arch: x86_64
+            target: x86_64-linux-musl
+          - arch: aarch64
+            target: aarch64-linux-musl
+
+    steps:
+      - name: Checkout util-linux
+        uses: actions/checkout@v4
+        with:
+          repository: util-linux/util-linux
+          fetch-depth: 0
+
+      - name: Get latest tag
+        id: get_tag
+        run: echo "TAG=$(git describe --tags `git rev-list --tags --max-count=1` | sed 's/v//')" >> $GITHUB_ENV
+
+      - name: Install musl toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools autoconf automake libtool pkg-config bison flex gettext
+          # 下载对应的跨平台 musl 工具链
+          if [ "${{ matrix.arch }}" = "aarch64" ]; then
+            wget https://musl.cc/aarch64-linux-musl-cross.tgz
+            tar -xzf aarch64-linux-musl-cross.tgz
+            echo "$(pwd)/aarch64-linux-musl-cross/bin" >> $GITHUB_PATH
+          fi
+
+      - name: Configure and Build
+        run: |
+          ./autogen.sh
+          
+          # 设置编译器
+          if [ "${{ matrix.arch }}" = "aarch64" ]; then
+            export CC=aarch64-linux-musl-gcc
+          else
+            export CC=musl-gcc
+          fi
+
+          ./configure \
+            --host=${{ matrix.target }} \
+            LDFLAGS="-static" \
+            --disable-all-programs \
+            --enable-lsblk \
+            --enable-static-programs=lsblk \
+            --without-udev \
+            --without-ncurses \
+            --without-python \
+            --without-tinfo
+
+          make lsblk -j$(nproc)
+          
+          # 移除符号表以减小体积
+          ${CC/gcc/strip} lsblk
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: lsblk-${{ matrix.arch }}
+          path: lsblk
