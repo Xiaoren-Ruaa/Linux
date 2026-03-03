@@ -25,8 +25,7 @@ jobs:
           ./autogen.sh
           
           export CC=aarch64-linux-gnu-gcc
-          # 1. 强制不链接 ncurses 和 tinfo 以解决图 3439 的报错
-          # 2. 设置运行时搜索路径为 /system/lib64
+          # 强制链接到 Android 的动态链接器，并设置库搜索路径
           export LDFLAGS="-Wl,-rpath=/system/lib64 -Wl,--dynamic-linker=/system/bin/linker64"
 
           ./configure \
@@ -49,23 +48,23 @@ jobs:
             --disable-nls \
             --disable-widechar
 
-          # 解决图 3440 的报错：手动构建依赖库的 .la 文件但不打包它们
+          # 编译库和程序
           make libblkid.la libmount.la libsmartcols.la -j$(nproc)
-          
-          # 编译最终的 lsblk
           make lsblk -j$(nproc)
           
-          # 瘦身
-          aarch64-linux-gnu-strip lsblk
+          # 【关键修正】从 .libs 目录提取真正的二进制文件
+          cp .libs/lsblk lsblk_real
+          
+          # 使用交叉编译工具链的 strip 进行瘦身
+          aarch64-linux-gnu-strip lsblk_real
 
-      - name: Check Dependencies
+      - name: Check Linkage
         run: |
-          # 这一步非常重要，请在日志中确认 NEEDED 部分
-          # 它应该列出 libblkid.so.1, libmount.so.1, libsmartcols.so.1
-          aarch64-linux-gnu-readelf -d lsblk | grep NEEDED
+          # 验证是否正确动态链接到了你那三个库
+          aarch64-linux-gnu-readelf -d lsblk_real | grep NEEDED
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lsblk-dynamic
-          path: lsblk
+          name: lsblk-android-dynamic
+          path: lsblk_real
