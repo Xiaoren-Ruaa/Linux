@@ -1,4 +1,4 @@
-name: Build RTL8812AU Final Key
+name: Build RTL8812AU Final Mission Accomplished
 
 on:
   workflow_dispatch: 
@@ -14,23 +14,25 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu bc build-essential libelf-dev libssl-dev flex bison
 
-      - name: Fetch Kernel Source & Driver
+      - name: Fetch Source
         run: |
           git clone --depth 1 https://github.com/OnePlusOSS/android_kernel_oneplus_sm8475.git kernel
           git clone --depth 1 https://github.com/aircrack-ng/rtl8812au.git driver
 
-      - name: Environment & Path Forgery
+      - name: Deep Environment Fix
         run: |
-          # 1. 彻底解决厂商写死的白名单绝对路径报错 (针对 1000004091 截图)
+          # 1. 维持路径欺骗（解决厂商写死的白名单路径）
           FAKE_PATH="/work/personal_build_pvc/1c4214df-492a-4e08-94ab-cd8066d8e2f0/basepvc-dis-jenkins-10.27.103.189kuqrXsvd/workspace/Personal_Debug_Release/personal_version_build_poject/code/source/vnd/kernel_platform/out/gki_kernel/common"
           sudo mkdir -p "$FAKE_PATH"
           sudo touch "$FAKE_PATH/abi_symbollist.raw"
           sudo chmod -R 777 /work/
 
-      - name: Precise Kernel Patching
-        run: |
           cd kernel
-          # 1. 修复 Kconfig (防止配置阶段崩溃)
+          # 2. 核心补丁：智能类型定义 (关键修改：移除 atomic_t 防止冲突)
+          # 只补齐 atomic64_t，并加上条件编译锁
+          echo -e '#ifndef __PATCH_ATOMIC_H__\n#define __PATCH_ATOMIC_H__\n#include <linux/types.h>\n#ifndef ATOMIC64_INIT\ntypedef struct { long counter; } atomic64_t_patch;\n#define atomic64_t atomic64_t_patch\n#endif\n#endif' > include/linux/smart_patch.h
+
+          # 3. 修复 Kconfig
           grep -rE "source \".*\"" . | while read -r line; do
               file_path=$(echo "$line" | cut -d: -f1)
               target_ref=$(echo "$line" | sed -E 's/.*source "(.*)"/\1/')
@@ -39,39 +41,31 @@ jobs:
               fi
           done
 
-          # 2. 核心：在不破坏 Makefile 的情况下注入变量 (修复 1000004095 截图的错误)
-          # 我们不使用 sed 注入，改用命令行参数传递，这样最安全
-          
-          # 3. 创建补丁头文件，解决 atomic64_t 结构体报错
-          echo -e '#ifndef __FORCED_TYPES_H__\n#define __FORCED_TYPES_H__\ntypedef struct { int counter; } atomic_t;\ntypedef struct { long counter; } atomic64_t;\n#endif' > include/linux/forced_types.h
-
-          # 4. 配置对齐
+          # 4. 配置
           cp ../config .config
           sed -i 's/CONFIG_UNUSED_KSYMS_WHITELIST=.*/CONFIG_UNUSED_KSYMS_WHITELIST=""/' .config
           sed -i 's/CONFIG_ABI_WHITELIST=.*/# CONFIG_ABI_WHITELIST is not set/' .config
-          
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
 
-      - name: Final Prepare (With Hard Injection)
+      - name: Final Prepare
         run: |
           cd kernel
-          # 使用 -include 强制所有文件识别我们的 atomic 结构体定义
-          # 这种方式不会改动 Makefile 源码，避开了语法错误
+          # 强制包含 smart_patch.h，只在缺少定义时补位
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-               KCFLAGS="-w -include $(pwd)/include/linux/forced_types.h" \
+               KCFLAGS="-w -include $(pwd)/include/linux/smart_patch.h" \
                prepare0 -j$(nproc)
 
       - name: Build Driver Module
         run: |
           cd driver
-          # 最终驱动编译
+          # 编译驱动模块
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
                KSRC=$GITHUB_WORKSPACE/kernel \
-               KCFLAGS="-w -include $GITHUB_WORKSPACE/kernel/include/linux/forced_types.h" \
+               KCFLAGS="-w -include $GITHUB_WORKSPACE/kernel/include/linux/smart_patch.h" \
                USER_MODULE_NAME=8812au -j$(nproc)
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: 8812au-ko-Final
+          name: 8812au-ko-success
           path: driver/8812au.ko
