@@ -1,7 +1,75 @@
-      - name: Prepare Modules (Ultra Fast Mode)
+name: Build RTL8812AU Fast Mode
+
+on:
+  workflow_dispatch: # 支持手动触发
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Toolchain (AArch64)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu clang lld llvm bc build-essential libelf-dev libssl-dev flex bison
+          echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
+          echo "ARCH=arm64" >> $GITHUB_ENV
+
+      - name: Fetch Kernel Source & Driver
+        run: |
+          # 拉取内核源码（深度为1）
+          git clone --depth 1 https://github.com/OnePlusOSS/android_kernel_oneplus_sm8475.git kernel
+          # 拉取网卡驱动
+          git clone --depth 1 https://github.com/aircrack-ng/rtl8812au.git driver
+
+      - name: Nuclear Patch & Config Clean
         run: |
           cd kernel
-          # 仅生成必要的头文件，不进行全局 HDRINST
+          # 1. 递归修复所有 Kconfig 缺失引用（解决 can't open file 报错）
+          grep -rE "source \".*\"" . | while read -r line; do
+              file_path=$(echo "$line" | cut -d: -f1)
+              target_ref=$(echo "$line" | sed -E 's/.*source "(.*)"/\1/')
+              if [ ! -f "$target_ref" ]; then
+                  sed -i "\|source \"$target_ref\"|d" "$file_path"
+              fi
+          done
+
+          # 2. 版本号对齐 (5.10.117-android12-9-g287b9af3dd02)
+          sed -i 's/SUBLEVEL =.*/SUBLEVEL = 117/' Makefile
+          sed -i '/CONFIG_LOCALVERSION=/d' ../config
+          echo 'CONFIG_LOCALVERSION="-android12-9-g287b9af3dd02"' >> ../config
+          
+          # 3. 彻底禁用导致报错的 GKI 检查和白名单路径
+          sed -i 's/CONFIG_UNUSED_KSYMS_WHITELIST=.*/CONFIG_UNUSED_KSYMS_WHITELIST=""/' ../config
+          sed -i 's/CONFIG_ABI_WHITELIST=.*/# CONFIG_ABI_WHITELIST is not set/' ../config
+          sed -i 's/CONFIG_GKI_HACKS_ALL=.*/# CONFIG_GKI_HACKS_ALL is not set/' ../config
+          
+          cp ../config .config
+          
+          # 4. 快速应用配置
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 olddefconfig
+
+      - name: Prepare Modules (Fast Mode)
+        run: |
+          cd kernel
+          # 关键修改：仅执行 scripts 和 prepare，跳过漫长的 HDRINST
+          # 加入 KCFLAGS 忽略原子操作等代码语法告警
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 \
-               KCFLAGS="-Wno-error -Wno-implicit-function-declaration" \
+               KCFLAGS="-Wno-error -Wno-implicit-function-declaration -Wno-int-conversion" \
                scripts prepare -j$(nproc)
+
+      - name: Build Module
+        run: |
+          cd driver
+          # 编译 8812au 驱动
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 \
+               KSRC=$GITHUB_WORKSPACE/kernel \
+               KCFLAGS="-Wno-error" \
+               USER_MODULE_NAME=8812au -j$(nproc)
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: 8812au-ko-package
+          path: driver/8812au.ko
