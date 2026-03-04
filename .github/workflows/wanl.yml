@@ -1,4 +1,4 @@
-name: Build RTL8812AU GCC Edition
+name: Build RTL8812AU Config Fix
 
 on:
   workflow_dispatch: 
@@ -9,18 +9,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Toolchain (GCC Focus)
+      - name: Setup Toolchain (AArch64 GCC)
         run: |
           sudo apt-get update
-          # 安装专用的交叉编译工具链
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu bc build-essential libelf-dev libssl-dev flex bison
+          sudo apt-get install -y gcc-aarch64-linux-gnu bc build-essential libelf-dev libssl-dev flex bison
 
       - name: Fetch Kernel Source & Driver
         run: |
           git clone --depth 1 https://github.com/OnePlusOSS/android_kernel_oneplus_sm8475.git kernel
           git clone --depth 1 https://github.com/aircrack-ng/rtl8812au.git driver
 
-      - name: Nuclear Patch & Config Align
+      - name: Deep Patch & Config Injection
         run: |
           cd kernel
           # 1. 递归修复缺失引用
@@ -32,35 +31,40 @@ jobs:
               fi
           done
 
-          # 2. 版本号对齐 (5.10.117)
+          # 2. 版本号与配置注入
           sed -i 's/SUBLEVEL =.*/SUBLEVEL = 117/' Makefile
           sed -i '/CONFIG_LOCALVERSION=/d' ../config
           echo 'CONFIG_LOCALVERSION="-android12-9-g287b9af3dd02"' >> ../config
           
-          # 3. 剥离 GKI 限制
+          # 3. 核心修复：注入原子操作支持，解决 atomic64_t 报错
+          echo "CONFIG_64BIT=y" >> ../config
+          echo "CONFIG_ARCH_HAS_ATOMIC64_DEC_IF_POSITIVE=y" >> ../config
+          echo "CONFIG_GENERIC_ATOMIC64=y" >> ../config
+          
+          # 4. 彻底禁用厂商 GKI 限制
           sed -i 's/CONFIG_UNUSED_KSYMS_WHITELIST=.*/CONFIG_UNUSED_KSYMS_WHITELIST=""/' ../config
           sed -i 's/CONFIG_ABI_WHITELIST=.*/# CONFIG_ABI_WHITELIST is not set/' ../config
           
           cp ../config .config
-          # 使用 GCC 重新生成配置
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
 
-      - name: GCC Prepare (No Clang Errors)
+      - name: GCC Prepare
         run: |
           cd kernel
-          # 使用 GCC 编译 prepare0。GCC 不会对 atomic_ll_sc.h 报致命错误
-          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- prepare0 -j$(nproc)
+          # 强制忽略所有警告，只管生成偏移量文件
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- KCFLAGS="-w" prepare0 -j$(nproc)
 
-      - name: Build Driver with GCC
+      - name: Build Module
         run: |
           cd driver
-          # 驱动也使用 GCC 编译，确保与内核环境一致
+          # 最终编译
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
                KSRC=$GITHUB_WORKSPACE/kernel \
+               KCFLAGS="-w" \
                USER_MODULE_NAME=8812au -j$(nproc)
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: 8812au-ko-gcc
+          name: 8812au-ko-fixed
           path: driver/8812au.ko
