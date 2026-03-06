@@ -25,17 +25,14 @@ jobs:
           export TARGET=aarch64-linux-android
           export API=21
 
-          # Add toolchain directory to PATH
           echo "$TOOLCHAIN" >> $GITHUB_PATH
 
-          # Create symlinks for legacy compiler names (some configure scripts expect these)
           cd $TOOLCHAIN
           ln -sf $TARGET$API-clang $TARGET-gcc
           ln -sf $TARGET$API-clang++ $TARGET-g++
           ln -sf llvm-ar $TARGET-ar
           ln -sf llvm-ranlib $TARGET-ranlib
 
-          # Export variables for later steps
           echo "TARGET=$TARGET" >> $GITHUB_ENV
           echo "API=$API" >> $GITHUB_ENV
           echo "CC=$TARGET$API-clang" >> $GITHUB_ENV
@@ -49,7 +46,7 @@ jobs:
         run: |
           LATEST=$(curl -s ftp://ftp.gnu.org/gnu/ncurses/ | grep -oP 'ncurses-\K[0-9]+\.[0-9]+' | sort -V | tail -n1)
           if [ -z "$LATEST" ]; then
-            LATEST="6.5"  # fallback
+            LATEST="6.5"
           fi
           echo "version=$LATEST"
           echo "version=$LATEST" >> $GITHUB_OUTPUT
@@ -58,18 +55,16 @@ jobs:
       - name: Get latest nano version
         id: nano
         run: |
-          # Try to get from download page
           HTML=$(curl -s https://www.nano-editor.org/download.php)
           LATEST=$(echo "$HTML" | grep -oP 'nano-\K[0-9]+\.[0-9]+(?=\.tar\.xz)' | head -1)
           if [ -z "$LATEST" ]; then
-            # Fallback: try dist directory
             MAJOR=$(curl -s https://www.nano-editor.org/dist/ | grep -oP 'v\K[0-9]+' | sort -n | tail -1)
             if [ -n "$MAJOR" ]; then
               LATEST=$(curl -s https://www.nano-editor.org/dist/v$MAJOR/ | grep -oP "nano-$MAJOR\.[0-9]+\.tar\.xz" | grep -oP "nano-\K[0-9]+\.[0-9]+" | sort -V | tail -1)
             fi
           fi
           if [ -z "$LATEST" ]; then
-            LATEST="8.3"  # fallback to known stable
+            LATEST="8.3"
           fi
           echo "version=$LATEST"
           echo "version=$LATEST" >> $GITHUB_OUTPUT
@@ -79,11 +74,10 @@ jobs:
         run: |
           wget "${{ steps.ncurses.outputs.url }}"
           tar xf ncurses-*.tar.gz
-          # Get the extracted directory name
           SRC_DIR=$(tar tf ncurses-*.tar.gz | head -1 | cut -d/ -f1)
           echo "NCURSES_SRC_DIR=$PWD/$SRC_DIR" >> $GITHUB_ENV
 
-      - name: Build ncurses (static)
+      - name: Build ncurses (static) - skip install.progs
         run: |
           cd $NCURSES_SRC_DIR
           make distclean || true
@@ -101,7 +95,8 @@ jobs:
             CFLAGS="-fPIE" \
             LDFLAGS="-pie -static-libgcc"
           make -j$(nproc)
-          make install.progs install.libs install.data
+          # 只安装库和terminfo数据，跳过可执行程序（解决交叉编译时无法运行tic的问题）
+          make install.libs install.data
           echo "NCURSES_DIR=$PWD/install" >> $GITHUB_ENV
 
       - name: Download and extract nano
