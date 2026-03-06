@@ -67,6 +67,24 @@ jobs:
           make install.libs
           echo "NCURSES_DIR=$PWD/install" >> $GITHUB_ENV
 
+      # --- 检测 ncurses 库名（解决 libncursesw.a 或 libncurses.a 差异）---
+      - name: Detect ncurses library name
+        run: |
+          echo "=== NCURSES_DIR/lib contents ==="
+          ls -la $NCURSES_DIR/lib
+          if [ -f "$NCURSES_DIR/lib/libncursesw.a" ]; then
+            echo "Found libncursesw.a"
+            echo "NCURSES_LIB_NAME=ncursesw" >> $GITHUB_ENV
+            echo "NCURSES_TLIB=ncursesw" >> $GITHUB_ENV
+          elif [ -f "$NCURSES_DIR/lib/libncurses.a" ]; then
+            echo "Found libncurses.a"
+            echo "NCURSES_LIB_NAME=ncurses" >> $GITHUB_ENV
+            echo "NCURSES_TLIB=ncurses" >> $GITHUB_ENV
+          else
+            echo "ERROR: No ncurses static library found!"
+            exit 1
+          fi
+
       # --- 下载 Vim 源码 ---
       - name: Download Vim source
         run: |
@@ -81,7 +99,7 @@ jobs:
           export LDFLAGS="-L$NCURSES_DIR/lib"
           export CFLAGS="-fPIE -O2"
 
-          # 设置交叉编译必需的缓存变量
+          # 交叉编译必需的缓存变量
           export vim_cv_toupper_broken=no
           export vim_cv_memmove_handles_overlap=yes
           export vim_cv_stat_ignores_slash=no
@@ -103,14 +121,15 @@ jobs:
             --disable-farsi \
             --disable-libsodium \
             --enable-multibyte \
-            --with-tlib=ncursesw \
+            --with-tlib=$NCURSES_TLIB \
             --prefix=$PWD/install
 
       # --- 编译 Vim（静态链接）---
       - name: Compile Vim (static)
         run: |
           cd $VIM_SRC_DIR/src
-          make -j$(nproc) LDFLAGS="$LDFLAGS -static -pie" LIBS="-lncursesw"
+          echo "Using library: -l${NCURSES_LIB_NAME}"
+          make -j$(nproc) LDFLAGS="$LDFLAGS -static -pie" LIBS="-l${NCURSES_LIB_NAME}"
           make install
 
       # --- 打包二进制文件 ---
