@@ -26,10 +26,8 @@ jobs:
           export API=21
           export BIN_DIR=$TOOLCHAIN/bin
 
-          # Add toolchain bin to PATH
           echo "$BIN_DIR" >> $GITHUB_PATH
 
-          # Define compiler using -target (clang automatically sets sysroot)
           echo "TARGET=$TARGET" >> $GITHUB_ENV
           echo "API=$API" >> $GITHUB_ENV
           echo "CC=$BIN_DIR/clang -target $TARGET$API" >> $GITHUB_ENV
@@ -124,10 +122,21 @@ jobs:
           make install.libs install.data
           echo "NCURSES_DIR=$PWD/install" >> $GITHUB_ENV
 
-      - name: Debug - list ncurses library files
+      - name: Debug and detect ncurses library
         run: |
           echo "=== NCURSES_DIR/lib contents ==="
           ls -la $NCURSES_DIR/lib
+          echo "=== Searching for ncurses static library ==="
+          if [ -f "$NCURSES_DIR/lib/libncursesw.a" ]; then
+            echo "Found libncursesw.a"
+            echo "NCURSES_LIB_NAME=ncursesw" >> $GITHUB_ENV
+          elif [ -f "$NCURSES_DIR/lib/libncurses.a" ]; then
+            echo "Found libncurses.a"
+            echo "NCURSES_LIB_NAME=ncurses" >> $GITHUB_ENV
+          else
+            echo "ERROR: No ncurses static library found!"
+            exit 1
+          fi
 
       - name: Download and extract nano
         run: |
@@ -136,7 +145,7 @@ jobs:
           SRC_DIR=$(tar tf nano-*.tar.xz | head -1 | cut -d/ -f1)
           echo "NANO_SRC_DIR=$PWD/$SRC_DIR" >> $GITHUB_ENV
 
-      - name: Configure nano (with ncursesw paths)
+      - name: Configure nano
         run: |
           cd $NANO_SRC_DIR
           export CPPFLAGS="-I$NCURSES_DIR/include -I$NCURSES_DIR/include/ncursesw"
@@ -156,8 +165,8 @@ jobs:
       - name: Compile nano (static)
         run: |
           cd $NANO_SRC_DIR
-          # 使用静态链接，只链接 libncursesw（它通常包含 terminfo 功能）
-          make -j$(nproc) LDFLAGS="$LDFLAGS -static -pie" LIBS="-lncursesw"
+          # 使用检测到的 ncurses 库名进行静态链接
+          make -j$(nproc) LDFLAGS="$LDFLAGS -static -pie" LIBS="-l${NCURSES_LIB_NAME}"
           make install
 
       - name: Strip and package
