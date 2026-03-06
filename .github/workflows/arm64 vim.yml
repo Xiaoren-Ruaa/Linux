@@ -123,20 +123,29 @@ jobs:
             --with-tlib=$NCURSES_LIB_NAME \
             --prefix=$PWD/install
 
-      # --- 编译 Vim（静态链接，增强对齐选项）---
+      # --- 编译 Vim（静态链接，强制TLS对齐）---
       - name: Compile Vim (static)
         run: |
           cd $VIM_SRC_DIR/src
           echo "=== Compile environment ==="
           echo "NCURSES_LIB_NAME = ${NCURSES_LIB_NAME}"
-          echo "LDFLAGS = ${LDFLAGS} -static -pie -Wl,-z,max-page-size=0x1000 -Wl,-z,common-page-size=0x1000 -Wl,--no-rosegment -Wl,--no-omagic -Wl,-z,nocopyreloc"
-          echo "LIBS = $NCURSES_DIR/lib/lib${NCURSES_LIB_NAME}.a -lm"
+
+          # 定义强化的链接选项
+          export MY_LDFLAGS="-L$NCURSES_DIR/lib -static -pie -Wl,-z,max-page-size=0x1000 -Wl,-z,common-page-size=0x1000 -Wl,--no-rosegment -Wl,--no-omagic -Wl,-z,nocopyreloc -Wl,-z,separate-loadable-segments -Wl,--hash-style=gnu"
+          export MY_LIBS="$NCURSES_DIR/lib/lib${NCURSES_LIB_NAME}.a -lm"
+
+          echo "MY_LDFLAGS = ${MY_LDFLAGS}"
+          echo "MY_LIBS = ${MY_LIBS}"
 
           # 清理旧编译
           make clean
 
-          # 详细编译输出
-          make -j$(nproc) V=1 LDFLAGS="$LDFLAGS -static -pie -Wl,-z,max-page-size=0x1000 -Wl,-z,common-page-size=0x1000 -Wl,--no-rosegment -Wl,--no-omagic -Wl,-z,nocopyreloc" LIBS="$NCURSES_DIR/lib/lib${NCURSES_LIB_NAME}.a -lm"
+          # 详细编译，确保传递选项
+          make -j$(nproc) V=1 LDFLAGS="$MY_LDFLAGS" LIBS="$MY_LIBS" \
+               EXTRA_LDFLAGS="$MY_LDFLAGS" \
+               LD="clang -target $TARGET$API" \
+               CC="$CC" CXX="$CXX"
+
           make install
 
       # --- 检查 TLS 段对齐 ---
