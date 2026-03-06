@@ -29,7 +29,7 @@ jobs:
           # Add toolchain bin to PATH
           echo "$BIN_DIR" >> $GITHUB_PATH
 
-          # Define compiler using -target (clang will automatically set sysroot)
+          # Define compiler using -target (clang automatically sets sysroot)
           echo "TARGET=$TARGET" >> $GITHUB_ENV
           echo "API=$API" >> $GITHUB_ENV
           echo "CC=$BIN_DIR/clang -target $TARGET$API" >> $GITHUB_ENV
@@ -38,15 +38,29 @@ jobs:
           echo "RANLIB=$BIN_DIR/llvm-ranlib" >> $GITHUB_ENV
           echo "STRIP=$BIN_DIR/llvm-strip" >> $GITHUB_ENV
 
-      - name: Test compiler with verbose output
+      - name: Test compiler and linker
         run: |
-          echo "=== Testing compiler with verbose output ==="
+          echo "=== Testing compiler and linker ==="
           echo '#include <stdio.h>\nint main() { printf("Hello\\n"); return 0; }' > test.c
-          $CC -v test.c -o test 2>&1 || {
-            echo "Compiler test failed. Full output above."
+
+          echo "--- Compiling to object file ---"
+          $CC -c test.c -o test.o 2>&1 | tee compile.log
+          if [ ! -f test.o ]; then
+            echo "Compilation failed. Full output:"
+            cat compile.log
             exit 1
-          }
-          echo "Compiler test passed."
+          fi
+          echo "Compilation successful."
+
+          echo "--- Linking object file ---"
+          $CC test.o -o test 2>&1 | tee link.log
+          if [ ! -f test ]; then
+            echo "Linking failed. Full output:"
+            cat link.log
+            exit 1
+          fi
+          echo "Linking successful."
+          echo "Compiler and linker test passed."
 
       - name: Get latest ncurses version
         id: ncurses
