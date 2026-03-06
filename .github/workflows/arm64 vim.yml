@@ -123,15 +123,15 @@ jobs:
             --with-tlib=$NCURSES_LIB_NAME \
             --prefix=$PWD/install
 
-      # --- 编译 Vim（静态链接）---
+      # --- 编译 Vim（静态链接，添加TLS对齐修复）---
       - name: Compile Vim (static)
         run: |
           cd $VIM_SRC_DIR/src
           echo "=== Compile environment ==="
           echo "NCURSES_LIB_NAME = ${NCURSES_LIB_NAME}"
-          echo "LDFLAGS = ${LDFLAGS} -static -pie"
+          echo "LDFLAGS = ${LDFLAGS} -static -pie -Wl,-z,max-page-size=0x1000 -Wl,-z,common-page-size=0x1000"
           echo "LIBS = $NCURSES_DIR/lib/lib${NCURSES_LIB_NAME}.a -lm"
-          make -j$(nproc) LDFLAGS="$LDFLAGS -static -pie" LIBS="$NCURSES_DIR/lib/lib${NCURSES_LIB_NAME}.a -lm"
+          make -j$(nproc) LDFLAGS="$LDFLAGS -static -pie -Wl,-z,max-page-size=0x1000 -Wl,-z,common-page-size=0x1000" LIBS="$NCURSES_DIR/lib/lib${NCURSES_LIB_NAME}.a -lm"
           make install
 
       # --- 打包二进制文件 ---
