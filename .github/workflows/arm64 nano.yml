@@ -141,13 +141,26 @@ jobs:
       - name: Locate terminfo directory
         id: locate_terminfo
         run: |
-          echo "=== Searching for terminfo directory under $NCURSES_DIR ==="
-          TERMINFO_PATH=$(find "$NCURSES_DIR" -type d -name terminfo | head -n1)
+          echo "=== Searching for terminfo directory ==="
+          # 优先从源码 misc/terminfo 获取
+          if [ -d "$NCURSES_SRC_DIR/misc/terminfo" ]; then
+            TERMINFO_PATH="$NCURSES_SRC_DIR/misc/terminfo"
+            echo "Found terminfo in source: $TERMINFO_PATH"
+          elif [ -d "$NCURSES_DIR/share/terminfo" ]; then
+            TERMINFO_PATH="$NCURSES_DIR/share/terminfo"
+            echo "Found terminfo in install: $TERMINFO_PATH"
+          else
+            # 尝试查找任何 terminfo 目录
+            TERMINFO_PATH=$(find "$NCURSES_DIR" -type d -name terminfo | head -n1)
+            if [ -n "$TERMINFO_PATH" ]; then
+              echo "Found terminfo via find: $TERMINFO_PATH"
+            fi
+          fi
+
           if [ -z "$TERMINFO_PATH" ]; then
             echo "ERROR: Could not find terminfo directory"
             exit 1
           fi
-          echo "Found terminfo at: $TERMINFO_PATH"
           echo "TERMINFO_PATH=$TERMINFO_PATH" >> $GITHUB_ENV
 
       - name: Download and extract nano
