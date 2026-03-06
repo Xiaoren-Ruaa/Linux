@@ -177,10 +177,10 @@ jobs:
           echo "=== Checking linked libraries (should only show system libs) ==="
           readelf -d nano | grep NEEDED || true
 
-          # 创建输出目录
+          # Create output directory
           mkdir -p $GITHUB_WORKSPACE/nano-android/terminfo
 
-          # 智能查找 terminfo 数据
+          # Find terminfo directory
           TERMINFO_SRC=""
           if [ -d "$NCURSES_DIR/share/terminfo" ]; then
             TERMINFO_SRC="$NCURSES_DIR/share/terminfo"
@@ -189,8 +189,5 @@ jobs:
           elif [ -d "$NCURSES_SRC_DIR/misc/terminfo" ]; then
             TERMINFO_SRC="$NCURSES_SRC_DIR/misc/terminfo"
           else
-            # 尝试查找任何名为 terminfo 的目录
-            TERMINFO_SRC=$(find $NCURSES_DIR -type d -name terminfo | head -1)
-          fi
-
-          if [ -n "$TERMIN
+            # Try to find any directory named terminfo under NCURSES_DIR
+            TERMINFO_SRC=$(find "$NCURSES_DIR" -type d -na
