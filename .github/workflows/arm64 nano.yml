@@ -1,0 +1,129 @@
+name: Build static Nmap for Android (arm64)
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Install system dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y make wget
+
+      - name: Download Android NDK
+        run: |
+          wget https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
+          unzip android-ndk-r25c-linux.zip
+          echo "NDK_PATH=${PWD}/android-ndk-r25c" >> $GITHUB_ENV
+
+      - name: Set up standalone toolchain
+        run: |
+          export PATH=$NDK_PATH/build/tools:$PATH
+          $NDK_PATH/build/tools/make-standalone-toolchain.sh \
+            --arch=arm64 \
+            --api=21 \
+            --install-dir=/tmp/standalone-toolchain
+          echo "/tmp/standalone-toolchain/bin" >> $GITHUB_PATH
+          echo "STANDALONE_TOOLCHAIN=/tmp/standalone-toolchain" >> $GITHUB_ENV
+
+      - name: Set cross-compilation environment
+        run: |
+          export TARGET=aarch64-linux-android
+          export TOOLCHAIN=/tmp/standalone-toolchain
+          echo "CC=$TOOLCHAIN/bin/$TARGET-gcc" >> $GITHUB_ENV
+          echo "CXX=$TOOLCHAIN/bin/$TARGET-g++" >> $GITHUB_ENV
+          echo "AR=$TOOLCHAIN/bin/$TARGET-ar" >> $GITHUB_ENV
+          echo "RANLIB=$TOOLCHAIN/bin/$TARGET-ranlib" >> $GITHUB_ENV
+          echo "STRIP=$TOOLCHAIN/bin/$TARGET-strip" >> $GITHUB_ENV
+          echo "TARGET=$TARGET" >> $GITHUB_ENV
+          echo "API=21" >> $GITHUB_ENV
+
+      # -------------------- 编译依赖库（静态）--------------------
+      - name: Build OpenSSL (static)
+        run: |
+          wget https://www.openssl.org/source/openssl-3.0.13.tar.gz
+          tar xf openssl-3.0.13.tar.gz
+          cd openssl-3.0.13
+          make distclean || true
+          export PATH=$TOOLCHAIN/bin:$PATH
+          export ANDROID_NDK_HOME=$NDK_PATH
+          ./Configure android-arm64 -D__ANDROID_API__=$API --prefix=$PWD/install no-shared
+          make -j$(nproc)
+          make install_sw
+          echo "OPENSSL_DIR=$PWD/install" >> $GITHUB_ENV
+          cd ..
+
+      - name: Build libpcap (static)
+        run: |
+          wget https://www.tcpdump.org/release/libpcap-1.10.4.tar.gz
+          tar xf libpcap-1.10.4.tar.gz
+          cd libpcap-1.10.4
+          make distclean || true
+          ./configure --host=$TARGET --prefix=$PWD/install --disable-shared --enable-static
+          make -j$(nproc)
+          make install
+          echo "LIBPCAP_DIR=$PWD/install" >> $GITHUB_ENV
+          cd ..
+
+      - name: Build Lua (static)
+        run: |
+          wget https://www.lua.org/ftp/lua-5.4.6.tar.gz
+          tar xf lua-5.4.6.tar.gz
+          cd lua-5.4.6
+          # 修改 Makefile 使用静态编译，并指定交叉编译器
+          make clean
+          make CC=$CC AR="$AR rcu" RANLIB=$RANLIB INSTALL_TOP=$PWD/install MYCFLAGS="-fPIE" MYLDFLAGS="-pie -static" linux
+          make install INSTALL_TOP=$PWD/install
+          echo "LUA_DIR=$PWD/install" >> $GITHUB_ENV
+          cd ..
+
+      # -------------------- 编译 Nmap（静态）--------------------
+      - name: Download Nmap source
+        run: |
+          wget https://nmap.org/dist/nmap-7.95.tar.bz2
+          tar xf nmap-7.95.tar.bz2
+
+      - name: Configure and compile Nmap (static)
+        run: |
+          cd nmap-7.95
+          export PATH=$TOOLCHAIN/bin:$PATH
+          export CFLAGS="-fPIE -O2 -I$OPENSSL_DIR/include -I$LIBPCAP_DIR/include -I$LUA_DIR/include"
+          export LDFLAGS="-pie -static -L$OPENSSL_DIR/lib -L$LIBPCAP_DIR/lib -L$LUA_DIR/lib"
+          export LIBS="-lssl -lcrypto -lpcap -llua -lm"
+
+          ./configure \
+            --host=$TARGET \
+            --build=x86_64-linux-gnu \
+            --target=$TARGET \
+            --prefix=$PWD/install \
+            --without-zenmap \
+            --without-nmap-update \
+            --with-pcap=linux \
+            --with-openssl=$OPENSSL_DIR \
+            --with-liblua=$LUA_DIR \
+            --with-libpcap=$LIBPCAP_DIR \
+            --enable-static \
+            --disable-shared
+
+          make -j$(nproc)
+          make install
+
+      - name: Strip and package
+        run: |
+          cd nmap-7.95/install/bin
+          $STRIP nmap
+          # 验证是否静态链接
+          echo "=== Checking linked libraries (should only show system libs) ==="
+          readelf -d nmap | grep NEEDED || true
+          tar -czf $GITHUB_WORKSPACE/nmap-android-static.tar.gz nmap
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nmap-android-static
+          path: nmap-android-static.tar.gz
