@@ -24,31 +24,26 @@ jobs:
           export TOOLCHAIN=$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64
           export TARGET=aarch64-linux-android
           export API=21
-          export SYSROOT=$TOOLCHAIN/sysroot
           export BIN_DIR=$TOOLCHAIN/bin
 
           # Add toolchain bin to PATH
           echo "$BIN_DIR" >> $GITHUB_PATH
 
-          # Define compiler with explicit target and sysroot
+          # Define compiler using -target (clang will automatically set sysroot)
           echo "TARGET=$TARGET" >> $GITHUB_ENV
           echo "API=$API" >> $GITHUB_ENV
-          echo "SYSROOT=$SYSROOT" >> $GITHUB_ENV
-          echo "CC=$BIN_DIR/clang --target=$TARGET$API --sysroot=$SYSROOT" >> $GITHUB_ENV
-          echo "CXX=$BIN_DIR/clang++ --target=$TARGET$API --sysroot=$SYSROOT" >> $GITHUB_ENV
+          echo "CC=$BIN_DIR/clang -target $TARGET$API" >> $GITHUB_ENV
+          echo "CXX=$BIN_DIR/clang++ -target $TARGET$API" >> $GITHUB_ENV
           echo "AR=$BIN_DIR/llvm-ar" >> $GITHUB_ENV
           echo "RANLIB=$BIN_DIR/llvm-ranlib" >> $GITHUB_ENV
           echo "STRIP=$BIN_DIR/llvm-strip" >> $GITHUB_ENV
-          echo "LD=$BIN_DIR/ld" >> $GITHUB_ENV
-          echo "AS=$BIN_DIR/llvm-as" >> $GITHUB_ENV
 
-      - name: Test compiler
+      - name: Test compiler with verbose output
         run: |
-          echo "=== Testing compiler ==="
+          echo "=== Testing compiler with verbose output ==="
           echo '#include <stdio.h>\nint main() { printf("Hello\\n"); return 0; }' > test.c
-          $CC test.c -o test 2> compiler_error.log || {
-            echo "Compiler test failed. Error output:"
-            cat compiler_error.log
+          $CC -v test.c -o test 2>&1 || {
+            echo "Compiler test failed. Full output above."
             exit 1
           }
           echo "Compiler test passed."
@@ -93,7 +88,6 @@ jobs:
         run: |
           cd $NCURSES_SRC_DIR
           make distclean || true
-          # 配置 ncurses
           ./configure \
             --host=$TARGET \
             --prefix=$PWD/install \
