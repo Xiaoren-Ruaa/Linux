@@ -19,7 +19,7 @@ jobs:
           unzip android-ndk-r25c-linux.zip
           echo "NDK_PATH=${PWD}/android-ndk-r25c" >> $GITHUB_ENV
 
-      - name: Set up NDK toolchain and environment
+      - name: Set up NDK toolchain with target and sysroot
         run: |
           export TOOLCHAIN=$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64
           export TARGET=aarch64-linux-android
@@ -29,12 +29,12 @@ jobs:
           # Add toolchain bin to PATH
           echo "$TOOLCHAIN/bin" >> $GITHUB_PATH
 
-          # Export variables for later steps
+          # Define compiler with explicit target and sysroot
           echo "TARGET=$TARGET" >> $GITHUB_ENV
           echo "API=$API" >> $GITHUB_ENV
           echo "SYSROOT=$SYSROOT" >> $GITHUB_ENV
-          echo "CC=$TOOLCHAIN/bin/$TARGET$API-clang" >> $GITHUB_ENV
-          echo "CXX=$TOOLCHAIN/bin/$TARGET$API-clang++" >> $GITHUB_ENV
+          echo "CC=$TOOLCHAIN/bin/clang --target=$TARGET$API --sysroot=$SYSROOT" >> $GITHUB_ENV
+          echo "CXX=$TOOLCHAIN/bin/clang++ --target=$TARGET$API --sysroot=$SYSROOT" >> $GITHUB_ENV
           echo "AR=$TOOLCHAIN/bin/llvm-ar" >> $GITHUB_ENV
           echo "RANLIB=$TOOLCHAIN/bin/llvm-ranlib" >> $GITHUB_ENV
           echo "STRIP=$TOOLCHAIN/bin/llvm-strip" >> $GITHUB_ENV
@@ -79,7 +79,6 @@ jobs:
         run: |
           cd $NCURSES_SRC_DIR
           make distclean || true
-          # 添加 --sysroot 确保编译器能找到头文件和库
           ./configure \
             --host=$TARGET \
             --prefix=$PWD/install \
@@ -91,7 +90,6 @@ jobs:
             --enable-termcap \
             --with-terminfo-dirs=/system/etc/terminfo:/data/misc/terminfo \
             --with-default-terminfo-dir=/system/etc/terminfo \
-            CC="$CC --sysroot=$SYSROOT" \
             CFLAGS="-fPIE"
           make -j$(nproc)
           make install.libs install.data
@@ -107,9 +105,8 @@ jobs:
       - name: Configure nano
         run: |
           cd $NANO_SRC_DIR
-          # 配置阶段仅传递必要的标志，不包含 -static
-          export CFLAGS="-fPIE -O2 -I$NCURSES_DIR/include --sysroot=$SYSROOT"
-          export LDFLAGS="-L$NCURSES_DIR/lib --sysroot=$SYSROOT"
+          export CFLAGS="-fPIE -O2 -I$NCURSES_DIR/include"
+          export LDFLAGS="-L$NCURSES_DIR/lib"
           export LIBS="-lncursesw -ltinfo"
 
           ./configure \
@@ -130,7 +127,6 @@ jobs:
       - name: Compile nano (static)
         run: |
           cd $NANO_SRC_DIR
-          # 编译时添加静态链接和PIE标志
           make -j$(nproc) LDFLAGS="$LDFLAGS -pie -static"
           make install
 
