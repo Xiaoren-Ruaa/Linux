@@ -167,7 +167,6 @@ jobs:
           cd $NANO_SRC_DIR
           echo "=== Compiling with library: -l${NCURSES_LIB_NAME} ==="
           echo "=== Library path: -L$NCURSES_DIR/lib ==="
-          # 显式指定库路径和静态链接标志
           make -j$(nproc) LDFLAGS="-L$NCURSES_DIR/lib -static -pie" LIBS="-l${NCURSES_LIB_NAME}"
           make install
 
@@ -177,14 +176,21 @@ jobs:
           $STRIP nano
           echo "=== Checking linked libraries (should only show system libs) ==="
           readelf -d nano | grep NEEDED || true
-          mkdir -p $GITHUB_WORKSPACE/nano-android/terminfo
-          cp -r $NCURSES_DIR/share/terminfo/* $GITHUB_WORKSPACE/nano-android/terminfo/
-          cp nano $GITHUB_WORKSPACE/nano-android/
-          cd $GITHUB_WORKSPACE/nano-android
-          tar -czf $GITHUB_WORKSPACE/nano-android-static.tar.gz *
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: nano-android-static-latest
-          path: nano-android-static.tar.gz
+          # 创建输出目录
+          mkdir -p $GITHUB_WORKSPACE/nano-android/terminfo
+
+          # 智能查找 terminfo 数据
+          TERMINFO_SRC=""
+          if [ -d "$NCURSES_DIR/share/terminfo" ]; then
+            TERMINFO_SRC="$NCURSES_DIR/share/terminfo"
+          elif [ -d "$NCURSES_DIR/share/terminfo" ]; then
+            TERMINFO_SRC="$NCURSES_DIR/share/terminfo"
+          elif [ -d "$NCURSES_SRC_DIR/misc/terminfo" ]; then
+            TERMINFO_SRC="$NCURSES_SRC_DIR/misc/terminfo"
+          else
+            # 尝试查找任何名为 terminfo 的目录
+            TERMINFO_SRC=$(find $NCURSES_DIR -type d -name terminfo | head -1)
+          fi
+
+          if [ -n "$TERMIN
