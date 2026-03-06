@@ -41,8 +41,6 @@ jobs:
       - name: Test compiler and linker
         run: |
           echo "=== Testing compiler and linker ==="
-
-          # Create a proper C source file using here document
           cat > test.c << 'EOF'
           #include <stdio.h>
           int main() {
@@ -133,32 +131,27 @@ jobs:
           SRC_DIR=$(tar tf nano-*.tar.xz | head -1 | cut -d/ -f1)
           echo "NANO_SRC_DIR=$PWD/$SRC_DIR" >> $GITHUB_ENV
 
-      - name: Configure nano
+      - name: Configure nano (without linking flags)
         run: |
           cd $NANO_SRC_DIR
+          # 配置阶段只传递 CFLAGS（头文件路径），不传递 LDFLAGS 和 LIBS
           export CFLAGS="-fPIE -O2 -I$NCURSES_DIR/include"
-          export LDFLAGS="-L$NCURSES_DIR/lib"
-          export LIBS="-lncursesw -ltinfo"
-
+          # 不要设置 LDFLAGS 和 LIBS，以免干扰基本编译器测试
           ./configure \
             --host=$TARGET \
             --build=x86_64-linux-gnu \
             --target=$TARGET \
             --prefix=$PWD/install \
-            --disable-shared \
-            --enable-static \
             --enable-utf8 \
             --disable-nls \
             --disable-speller \
-            --with-terminfo-dirs=/system/etc/terminfo:/data/misc/terminfo \
-            --with-default-terminfo-dir=/system/etc/terminfo \
-            NCURSES_LIBS="-lncursesw" \
             ac_cv_func_setenv=yes
 
       - name: Compile nano (static)
         run: |
           cd $NANO_SRC_DIR
-          make -j$(nproc) LDFLAGS="$LDFLAGS -pie -static"
+          # 编译时添加静态链接标志，链接 ncurses 库
+          make -j$(nproc) LDFLAGS="-L$NCURSES_DIR/lib -pie -static" LIBS="-lncursesw -ltinfo"
           make install
 
       - name: Strip and package
