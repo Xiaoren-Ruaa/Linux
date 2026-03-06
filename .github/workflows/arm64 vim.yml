@@ -95,8 +95,7 @@ jobs:
           cd $VIM_SRC_DIR/src
           export CPPFLAGS="-I$NCURSES_DIR/include -I$NCURSES_DIR/include/ncursesw"
           export LDFLAGS="-L$NCURSES_DIR/lib"
-          # 使用完整路径确保链接器能找到静态库
-          export LIBS="$NCURSES_DIR/lib/lib${NCURSES_LIB_NAME}.a"
+          export LIBS="$NCURSES_DIR/lib/lib${NCURSES_LIB_NAME}.a -lm"
           export CFLAGS="-fPIE -O2"
 
           # 交叉编译必需的缓存变量
@@ -131,9 +130,8 @@ jobs:
           echo "=== Compile environment ==="
           echo "NCURSES_LIB_NAME = ${NCURSES_LIB_NAME}"
           echo "LDFLAGS = ${LDFLAGS} -static -pie"
-          echo "LIBS = $NCURSES_DIR/lib/lib${NCURSES_LIB_NAME}.a"
-          # 使用完整路径确保链接
-          make -j$(nproc) LDFLAGS="$LDFLAGS -static -pie" LIBS="$NCURSES_DIR/lib/lib${NCURSES_LIB_NAME}.a"
+          echo "LIBS = $NCURSES_DIR/lib/lib${NCURSES_LIB_NAME}.a -lm"
+          make -j$(nproc) LDFLAGS="$LDFLAGS -static -pie" LIBS="$NCURSES_DIR/lib/lib${NCURSES_LIB_NAME}.a -lm"
           make install
 
       # --- 打包二进制文件 ---
