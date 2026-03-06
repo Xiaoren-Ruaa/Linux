@@ -1,0 +1,76 @@
+name: Build Ultimate Static fstrim
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+        with:
+          repository: util-linux/util-linux
+          fetch-depth: 1
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          # 修复 Image 3：补齐构建组件
+          sudo apt-get install -y autoconf automake libtool pkg-config bison flex wget tar file xz-utils build-essential gettext autopoint
+
+      - name: Setup Bootlin Toolchain
+        run: |
+          # 修复 Image 2：换用稳定的 Bootlin 官方源
+          wget https://toolchains.bootlin.com/downloads/releases/toolchains/aarch64/tarballs/aarch64--musl--stable-2024.05-1.tar.xz
+          tar -xf aarch64--musl--stable-2024.05-1.tar.xz
+          echo "$(pwd)/aarch64--musl--stable-2024.05-1/bin" >> $GITHUB_PATH
+
+      - name: Configure and Build
+        run: |
+          ./autogen.sh
+          
+          # 核心修正：
+          # 1. -fno-stack-protector: 解决 Image 4 的 __stack_chk_guard 报错
+          # 2. -no-pie: 彻底解决重定位冲突，这是 Android 运行成功的关键
+          export CC="aarch64-linux-gcc"
+          export CFLAGS="-Os -static -fno-stack-protector -no-pie"
+          export LDFLAGS="-static -static-libgcc -no-pie"
+          
+          # --disable-shared 是核心，强制不生成动态库
+          ./configure --host=aarch64-linux \
+                      --disable-shared \
+                      --enable-static \
+                      --disable-all-programs \
+                      --enable-fstrim \
+                      --enable-libmount \
+                      --enable-libblkid \
+                      --enable-libuuid \
+                      --without-python \
+                      --without-systemd \
+                      --without-udev \
+                      --without-ncurses \
+                      --without-cap-ng \
+                      --disable-nls \
+                      --disable-bash-completion
+          
+          # 暴力注入：直接给 make 传参，防止它反悔编成动态的
+          make fstrim LDFLAGS="-all-static" CFLAGS="-Os -static -fno-stack-protector -no-pie"
+          
+          aarch64-linux-strip --strip-all fstrim
+          
+          # 最终校验：这次如果还有 interpreter，脚本会直接报错停止
+          echo "================ Verification ================"
+          file fstrim
+          if readelf -l fstrim | grep -q "interpreter"; then
+            echo "FAILED: Binary is STILL dynamic! Interpreter found."
+            exit 1
+          else
+            echo "SUCCESS: Truly static binary created!"
+          fi
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fstrim-final-static
+          path: fstrim
