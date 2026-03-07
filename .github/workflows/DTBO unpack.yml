@@ -3,57 +3,71 @@ name: DTBO unpack
 on:
   workflow_dispatch:
     inputs:
-      filename:
-        description: '上传的镜像文件名 (默认 dtbo.img)'
+      img_name:
+        description: '上传的文件名 (如 dtbo.img)'
         required: true
         default: 'dtbo.img'
 
 jobs:
-  process:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Install Tools
+      - name: Environment Setup
         run: |
           sudo apt-get update
-          sudo apt-get install -y device-tree-compiler python3-pip
-          # 下载多种解包工具以应对不同厂商
-          wget https://github.com/HemanthJabalpuri/platform_system_libufdt/raw/master/utils/src/mkdtimg
+          sudo apt-get install -y device-tree-compiler gcc make python3 git
+
+      - name: Build Global mkdtimg Tool
+        run: |
+          # 直接从 AOSP 源码编译最新版 mkdtimg，确保适配所有厂商标准格式
+          git clone https://android.googlesource.com/platform/system/libufdt --depth 1
+          cd libufdt/utils/src/
+          gcc mkdtimg.c dtbo_format.c -o ../../../mkdtimg
+          cd ../../../
           chmod +x mkdtimg
 
-      - name: Smart Unpack
+      - name: Universal Unpack Logic
         run: |
           mkdir -p output/dtb
-          IMG_NAME="${{ github.event.inputs.filename }}"
+          IMG="${{ github.event.inputs.img_name }}"
           
-          echo "正在检测镜像结构..."
-          # 尝试标准 Android 格式解包
-          ./mkdtimg dump "$IMG_NAME" -b output/dtb/content || {
-            echo "标准解包失败，尝试暴力切分..."
-            # 针对非标格式的兜底逻辑：寻找 DTB 头部魔数 0xd00dfeed
-            grep -aob $'\xd0\x0d\xfe\xed' "$IMG_NAME"
-          }
+          echo ">>> 尝试标准 Android DTBO 格式解包..."
+          if ./mkdtimg dump "$IMG" -b output/dtb/content; then
+            echo "标准解包成功。"
+          else
+            echo "标准解包失败，启动暴力切分逻辑 (适配非标/加密厂商)..."
+            # 寻找 DTB 魔数 0xd00dfeed 并手动切割
+            grep -aob $'\xd0\x0d\xfe\xed' "$IMG" | cut -d: -f1 > offsets.txt
+            count=0
+            while read -r offset; do
+              dd if="$IMG" of=output/dtb/content.$count bs=1 skip="$offset" status=none
+              count=$((count + 1))
+            done < offsets.txt
+          fi
 
-      - name: Batch Decompile
+      - name: Recursive Decompile
         run: |
           mkdir -p output/dts
-          # 遍历所有提取出的 dtb 文件并转换为 dts
-          find output/dtb -name "content.*" -type f | while read file; do
-            idx=$(basename "$file" | cut -d. -f2)
-            echo "反编译索引: $idx"
-            dtc -I dtb -O dts "$file" -o "output/dts/panel_config_${idx}.dts" 2>/dev/null || echo "跳过非DTB片段: $idx"
+          # 遍历所有提取出的二进制块
+          find output/dtb -type f | while read -r dtb_file; do
+            idx=$(basename "$dtb_file" | sed 's/content.//')
+            echo "正在处理节点: $idx"
+            # 尝试反编译，忽略非 DTB 数据块带来的报错
+            dtc -I dtb -O dts "$dtb_file" -o "output/dts/node_${idx}.dts" 2>/dev/null || rm "output/dts/node_${idx}.dts"
           done
 
-      - name: Analyze & Tag
+      - name: Smart Analysis (Panel Locator)
         run: |
-          # 自动在 dts 中搜索厂商标识，方便你快速找到屏幕文件
-          grep -r "qcom,mdss-dsi-panel-name" output/dts/ > output/search_results.txt || true
-          grep -r "model =" output/dts/ >> output/search_results.txt || true
+          # 核心步骤：帮你从几十个 DTS 中过滤出控制屏幕的文件
+          echo "--- 屏幕/刷新率相关配置索引 ---" > output/summary.txt
+          grep -rnE "qcom,mdss-dsi-panel-name|framerate|max-brightness|touch-report-rate" output/dts/ >> output/summary.txt || true
+          echo "分析完成，请查看 summary.txt 定位目标文件。"
 
-      - name: Upload Artifacts
+      - name: Package Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Universal-DTBO-Package
+          name: DTBO-Analysis-Result
           path: output/
