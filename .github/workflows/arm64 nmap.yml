@@ -92,21 +92,30 @@ jobs:
           echo "LIBPCAP_DIR=$PWD/install" >> $GITHUB_ENV
           cd ..
 
-      # --- 编译 Lua（静态，仅库）---
+      # --- 编译 Lua（静态）- 直接编译源文件 ---
       - name: Build Lua (static)
         run: |
           VER=${{ steps.lua.outputs.version }}
           wget https://www.lua.org/ftp/lua-$VER.tar.gz
           tar xf lua-$VER.tar.gz
-          cd lua-$VER
-          make clean
-          # 编译静态库 liblua.a
-          make CC=$CC AR="$AR rcu" RANLIB=$RANLIB INSTALL_TOP=$PWD/install MYCFLAGS="-fPIE" MYLDFLAGS="-pie" liblua.a
-          mkdir -p $PWD/install/include $PWD/install/lib
-          cp *.h $PWD/install/include/
-          cp liblua.a $PWD/install/lib/
-          echo "LUA_DIR=$PWD/install" >> $GITHUB_ENV
-          cd ..
+          cd lua-$VER/src
+
+          # 编译所有 .c 文件为目标文件
+          for f in *.c; do
+            $CC -fPIE -O2 -c $f
+          done
+
+          # 创建静态库
+          $AR rcu liblua.a *.o
+          $RANLIB liblua.a
+
+          # 安装头文件和库
+          mkdir -p $PWD/../install/include $PWD/../install/lib
+          cp *.h $PWD/../install/include/
+          cp liblua.a $PWD/../install/lib/
+
+          echo "LUA_DIR=$PWD/.." >> $GITHUB_ENV
+          cd ../..
 
       # --- 下载并编译 nmap（静态）---
       - name: Download nmap source
