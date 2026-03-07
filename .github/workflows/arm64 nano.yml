@@ -32,7 +32,6 @@ jobs:
           echo "RANLIB=$BIN_DIR/llvm-ranlib" >> $GITHUB_ENV
           echo "STRIP=$BIN_DIR/llvm-strip" >> $GITHUB_ENV
           echo "TARGET=$TARGET" >> $GITHUB_ENV
-          echo "API=$API" >> $GITHUB_ENV
 
       # --- 获取最新 ncurses 版本 ---
       - name: Get latest ncurses version
@@ -83,8 +82,10 @@ jobs:
         run: |
           if [ -f "$NCURSES_DIR/lib/libncursesw.a" ]; then
             echo "NCURSES_LIB_NAME=ncursesw" >> $GITHUB_ENV
+            echo "NCURSES_LIB_PATH=$NCURSES_DIR/lib/libncursesw.a" >> $GITHUB_ENV
           elif [ -f "$NCURSES_DIR/lib/libncurses.a" ]; then
             echo "NCURSES_LIB_NAME=ncurses" >> $GITHUB_ENV
+            echo "NCURSES_LIB_PATH=$NCURSES_DIR/lib/libncurses.a" >> $GITHUB_ENV
           else
             echo "ERROR: No ncurses static library found!"
             exit 1
@@ -103,7 +104,8 @@ jobs:
         run: |
           cd $NANO_SRC_DIR
           export CPPFLAGS="-I$NCURSES_DIR/include -I$NCURSES_DIR/include/ncursesw"
-          export LDFLAGS="-L$NCURSES_DIR/lib"
+          # 配置阶段就使用完整库路径，避免检测失败
+          export LIBS="$NCURSES_LIB_PATH -lm"
           export CFLAGS="-fPIE -O2"
           # 交叉编译必需的缓存变量
           export ac_cv_func_setenv=yes
@@ -123,7 +125,8 @@ jobs:
       - name: Compile nano (static)
         run: |
           cd $NANO_SRC_DIR
-          make -j$(nproc) LDFLAGS="$LDFLAGS -static -pie" LIBS="-l${NCURSES_LIB_NAME}"
+          # 编译时使用完整路径库，并添加静态链接和PIE标志
+          make -j$(nproc) LDFLAGS="-L$NCURSES_DIR/lib -static -pie" LIBS="$NCURSES_LIB_PATH"
           make install
 
       # --- 打包二进制文件 ---
