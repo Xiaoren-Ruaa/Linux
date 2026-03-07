@@ -1,4 +1,4 @@
-name: Build static nano binary for Android (arm64) with TLS fix
+name: Build dynamic nano binary for Android (arm64)
 
 on:
   workflow_dispatch:
@@ -11,7 +11,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt update
-          sudo apt install -y make wget curl binutils
+          sudo apt install -y make wget curl
 
       - name: Download Android NDK
         run: |
@@ -32,7 +32,6 @@ jobs:
           echo "RANLIB=$BIN_DIR/llvm-ranlib" >> $GITHUB_ENV
           echo "STRIP=$BIN_DIR/llvm-strip" >> $GITHUB_ENV
           echo "TARGET=$TARGET" >> $GITHUB_ENV
-          echo "API=$API" >> $GITHUB_ENV
 
       # --- 获取最新 ncurses 版本 ---
       - name: Get latest ncurses version
@@ -57,8 +56,8 @@ jobs:
           echo "version=${LATEST:-8.3}" >> $GITHUB_OUTPUT
           echo "url=https://www.nano-editor.org/dist/v${LATEST%%.*}/nano-$LATEST.tar.xz" >> $GITHUB_OUTPUT
 
-      # --- 编译 ncurses（静态）---
-      - name: Download and build ncurses (static)
+      # --- 编译 ncurses（动态库）---
+      - name: Download and build ncurses (shared)
         run: |
           wget "${{ steps.ncurses.outputs.url }}"
           tar xf ncurses-*.tar.gz
@@ -67,30 +66,16 @@ jobs:
           ./configure \
             --host=$TARGET \
             --prefix=$PWD/install \
-            --without-shared \
-            --with-normal \
+            --with-shared \
+            --without-normal \
             --without-debug \
             --without-ada \
             --enable-widec \
             --enable-termcap \
-            CFLAGS="-fPIE"
+            CFLAGS="-fPIC"  # 生成位置无关代码
           make -j$(nproc)
-          make install.libs
+          make install
           echo "NCURSES_DIR=$PWD/install" >> $GITHUB_ENV
-
-      # --- 检测 ncurses 库名 ---
-      - name: Detect ncurses library name
-        run: |
-          if [ -f "$NCURSES_DIR/lib/libncursesw.a" ]; then
-            echo "NCURSES_LIB_NAME=ncursesw" >> $GITHUB_ENV
-            echo "NCURSES_LIB_PATH=$NCURSES_DIR/lib/libncursesw.a" >> $GITHUB_ENV
-          elif [ -f "$NCURSES_DIR/lib/libncurses.a" ]; then
-            echo "NCURSES_LIB_NAME=ncurses" >> $GITHUB_ENV
-            echo "NCURSES_LIB_PATH=$NCURSES_DIR/lib/libncurses.a" >> $GITHUB_ENV
-          else
-            echo "ERROR: No ncurses static library found!"
-            exit 1
-          fi
 
       # --- 下载 nano 源码 ---
       - name: Download nano source
@@ -100,66 +85,42 @@ jobs:
           SRC_DIR=$(tar tf nano-*.tar.xz | head -1 | cut -d/ -f1)
           echo "NANO_SRC_DIR=$PWD/$SRC_DIR" >> $GITHUB_ENV
 
-      # --- 配置 nano ---
-      - name: Configure nano
+      # --- 配置 nano（动态链接）---
+      - name: Configure nano (dynamic)
         run: |
           cd $NANO_SRC_DIR
           export CPPFLAGS="-I$NCURSES_DIR/include -I$NCURSES_DIR/include/ncursesw"
-          export LIBS="$NCURSES_LIB_PATH -lm"
+          export LDFLAGS="-L$NCURSES_DIR/lib"
           export CFLAGS="-fPIE -O2"
-          # 交叉编译必需的缓存变量
           export ac_cv_func_setenv=yes
-          export ac_cv_func_malloc_0_nonnull=yes
-          export ac_cv_func_realloc_0_nonnull=yes
           ./configure \
             --host=$TARGET \
             --build=x86_64-linux-gnu \
             --prefix=$PWD/install \
-            --disable-shared \
-            --enable-static \
             --enable-utf8 \
             --disable-nls \
             --disable-speller
 
-      # --- 编译 nano（静态链接 + TLS 对齐修复）---
-      - name: Compile nano (static)
+      # --- 编译 nano（动态链接）---
+      - name: Compile nano (dynamic)
         run: |
           cd $NANO_SRC_DIR
-          # 增强的链接器选项以强制 TLS 对齐
-          EXTRA_LDFLAGS="-Wl,-z,max-page-size=0x1000 -Wl,-z,common-page-size=0x1000 -Wl,--no-rosegment -Wl,-z,separate-loadable-segments"
-          make -j$(nproc) LDFLAGS="-L$NCURSES_DIR/lib -static -pie $EXTRA_LDFLAGS" LIBS="$NCURSES_LIB_PATH -lm"
+          make -j$(nproc) LDFLAGS="$LDFLAGS -pie" LIBS="-lncursesw -lm"
           make install
 
-      # --- 检查 TLS 段对齐（过滤警告）---
-      - name: Check TLS alignment
-        run: |
-          cd $NANO_SRC_DIR/install/bin
-          echo "=== Checking TLS segment alignment (warnings filtered) ==="
-          # 显示 TLS 段相关信息，屏蔽 stderr 警告
-          readelf -l nano 2>/dev/null | grep -A5 TLS || echo "No TLS segment found"
-          # 提取对齐值
-          ALIGN=$(readelf -l nano 2>/dev/null | grep -A5 TLS | grep -o '0x[0-9a-f]*$' | head -1)
-          if [ -z "$ALIGN" ]; then
-            echo "Could not determine TLS alignment."
-          elif [ "$ALIGN" != "0x40" ]; then
-            echo "⚠️  TLS alignment is $ALIGN, expected 0x40 (64). Binary may not run on Android!"
-          else
-            echo "✅ TLS alignment OK ($ALIGN)."
-          fi
-
-      # --- 打包二进制文件 ---
-      - name: Package nano binary
+      # --- 打包二进制文件及其依赖库 ---
+      - name: Package nano with libraries
         run: |
           mkdir -p output
           cp $NANO_SRC_DIR/install/bin/nano output/
+          cp $NCURSES_DIR/lib/libncursesw.so* output/
           cd output
           $STRIP nano
-          echo "=== Checking linked libraries (should only show system libs) ==="
-          readelf -d nano 2>/dev/null | grep NEEDED || true
-          tar -czf $GITHUB_WORKSPACE/nano-android-static.tar.gz nano
+          $STRIP libncursesw.so*
+          tar -czf $GITHUB_WORKSPACE/nano-android-dynamic.tar.gz *
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: nano-android-static
-          path: nano-android-static.tar.gz
+          name: nano-android-dynamic
+          path: nano-android-dynamic.tar.gz
