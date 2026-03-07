@@ -104,7 +104,7 @@ jobs:
         run: |
           cd $NANO_SRC_DIR
           export CPPFLAGS="-I$NCURSES_DIR/include -I$NCURSES_DIR/include/ncursesw"
-          # 配置阶段就使用完整库路径，避免检测失败
+          # 配置阶段使用静态库路径和 -lm
           export LIBS="$NCURSES_LIB_PATH -lm"
           export CFLAGS="-fPIE -O2"
           # 交叉编译必需的缓存变量
@@ -125,8 +125,8 @@ jobs:
       - name: Compile nano (static)
         run: |
           cd $NANO_SRC_DIR
-          # 编译时使用完整路径库，并添加静态链接和PIE标志
-          make -j$(nproc) LDFLAGS="-L$NCURSES_DIR/lib -static -pie" LIBS="$NCURSES_LIB_PATH"
+          # 编译时同样使用完整库路径和 -lm
+          make -j$(nproc) LDFLAGS="-L$NCURSES_DIR/lib -static -pie" LIBS="$NCURSES_LIB_PATH -lm"
           make install
 
       # --- 打包二进制文件 ---
