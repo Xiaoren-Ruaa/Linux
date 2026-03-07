@@ -1,0 +1,59 @@
+name: DTBO unpack
+
+on:
+  workflow_dispatch:
+    inputs:
+      filename:
+        description: '上传的镜像文件名 (默认 dtbo.img)'
+        required: true
+        default: 'dtbo.img'
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y device-tree-compiler python3-pip
+          # 下载多种解包工具以应对不同厂商
+          wget https://github.com/HemanthJabalpuri/platform_system_libufdt/raw/master/utils/src/mkdtimg
+          chmod +x mkdtimg
+
+      - name: Smart Unpack
+        run: |
+          mkdir -p output/dtb
+          IMG_NAME="${{ github.event.inputs.filename }}"
+          
+          echo "正在检测镜像结构..."
+          # 尝试标准 Android 格式解包
+          ./mkdtimg dump "$IMG_NAME" -b output/dtb/content || {
+            echo "标准解包失败，尝试暴力切分..."
+            # 针对非标格式的兜底逻辑：寻找 DTB 头部魔数 0xd00dfeed
+            grep -aob $'\xd0\x0d\xfe\xed' "$IMG_NAME"
+          }
+
+      - name: Batch Decompile
+        run: |
+          mkdir -p output/dts
+          # 遍历所有提取出的 dtb 文件并转换为 dts
+          find output/dtb -name "content.*" -type f | while read file; do
+            idx=$(basename "$file" | cut -d. -f2)
+            echo "反编译索引: $idx"
+            dtc -I dtb -O dts "$file" -o "output/dts/panel_config_${idx}.dts" 2>/dev/null || echo "跳过非DTB片段: $idx"
+          done
+
+      - name: Analyze & Tag
+        run: |
+          # 自动在 dts 中搜索厂商标识，方便你快速找到屏幕文件
+          grep -r "qcom,mdss-dsi-panel-name" output/dts/ > output/search_results.txt || true
+          grep -r "model =" output/dts/ >> output/search_results.txt || true
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Universal-DTBO-Package
+          path: output/
