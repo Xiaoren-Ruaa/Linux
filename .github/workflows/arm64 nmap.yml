@@ -29,7 +29,6 @@ jobs:
 
           echo "$BIN_DIR" >> $GITHUB_PATH
 
-          # 定义编译器（使用 --target 而不是单独指定 -target，以便后续变量传递）
           echo "TARGET=$TARGET" >> $GITHUB_ENV
           echo "API=$API" >> $GITHUB_ENV
           echo "SYSROOT=$SYSROOT" >> $GITHUB_ENV
@@ -39,42 +38,50 @@ jobs:
           echo "RANLIB=$BIN_DIR/llvm-ranlib" >> $GITHUB_ENV
           echo "STRIP=$BIN_DIR/llvm-strip" >> $GITHUB_ENV
 
-      # --- 获取最新版本号（从官网解析，带后备值）---
+      # --- 获取最新版本号（带可靠的后备版本）---
       - name: Get latest OpenSSL version
         id: openssl
         run: |
-          LATEST=$(curl -s https://www.openssl.org/source/ | grep -oP 'openssl-3\.0\.\d+' | sort -V | tail -n1)
-          echo "version=${LATEST#openssl-}" >> $GITHUB_OUTPUT
-          echo "url=https://www.openssl.org/source/$LATEST.tar.gz" >> $GITHUB_OUTPUT
+          VERSION=$(curl -s https://www.openssl.org/source/ | grep -oP 'openssl-3\.0\.\d+' | sort -V | tail -n1 | sed 's/openssl-//')
+          if [ -z "$VERSION" ]; then
+            VERSION="3.0.13"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Get latest libpcap version
         id: libpcap
         run: |
-          LATEST=$(curl -s https://www.tcpdump.org/release/ | grep -oP 'libpcap-1\.10\.\d+' | sort -V | tail -n1)
-          echo "version=${LATEST#libpcap-}" >> $GITHUB_OUTPUT
-          echo "url=https://www.tcpdump.org/release/$LATEST.tar.gz" >> $GITHUB_OUTPUT
+          VERSION=$(curl -s https://www.tcpdump.org/release/ | grep -oP 'libpcap-1\.10\.\d+' | sort -V | tail -n1 | sed 's/libpcap-//')
+          if [ -z "$VERSION" ]; then
+            VERSION="1.10.4"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Get latest Lua version
         id: lua
         run: |
-          LATEST=$(curl -s https://www.lua.org/ftp/ | grep -oP 'lua-5\.4\.\d+' | sort -V | tail -n1)
-          echo "version=${LATEST#lua-}" >> $GITHUB_OUTPUT
-          echo "url=https://www.lua.org/ftp/$LATEST.tar.gz" >> $GITHUB_OUTPUT
+          VERSION=$(curl -s https://www.lua.org/ftp/ | grep -oP 'lua-5\.4\.\d+' | sort -V | tail -n1 | sed 's/lua-//')
+          if [ -z "$VERSION" ]; then
+            VERSION="5.4.6"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Get latest nmap version
         id: nmap
         run: |
-          LATEST=$(curl -s https://nmap.org/dist/ | grep -oP 'nmap-7\.\d+' | sort -V | tail -n1)
-          echo "version=${LATEST#nmap-}" >> $GITHUB_OUTPUT
-          echo "url=https://nmap.org/dist/$LATEST.tar.bz2" >> $GITHUB_OUTPUT
+          VERSION=$(curl -s https://nmap.org/dist/ | grep -oP 'nmap-7\.\d+' | sort -V | tail -n1 | sed 's/nmap-//')
+          if [ -z "$VERSION" ]; then
+            VERSION="7.95"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      # --- 编译 OpenSSL（完全静态）---
+      # --- 编译 OpenSSL（静态）---
       - name: Build OpenSSL (static)
         run: |
-          wget "${{ steps.openssl.outputs.url }}"
-          tar xf openssl-*.tar.gz
-          cd openssl-*
-          # 配置为 Android arm64，只生成静态库
+          VER=${{ steps.openssl.outputs.version }}
+          wget https://www.openssl.org/source/openssl-$VER.tar.gz
+          tar xf openssl-$VER.tar.gz
+          cd openssl-$VER
           ./Configure android-arm64 -D__ANDROID_API__=$API --prefix=$PWD/install no-shared
           make -j$(nproc)
           make install_sw
@@ -84,9 +91,10 @@ jobs:
       # --- 编译 libpcap（静态）---
       - name: Build libpcap (static)
         run: |
-          wget "${{ steps.libpcap.outputs.url }}"
-          tar xf libpcap-*.tar.gz
-          cd libpcap-*
+          VER=${{ steps.libpcap.outputs.version }}
+          wget https://www.tcpdump.org/release/libpcap-$VER.tar.gz
+          tar xf libpcap-$VER.tar.gz
+          cd libpcap-$VER
           ./configure --host=$TARGET --prefix=$PWD/install --disable-shared --enable-static
           make -j$(nproc)
           make install
@@ -96,15 +104,13 @@ jobs:
       # --- 编译 Lua（静态）---
       - name: Build Lua (static)
         run: |
-          wget "${{ steps.lua.outputs.url }}"
-          tar xf lua-*.tar.gz
-          cd lua-*
-          # 修改 Makefile 使用交叉编译工具链，并生成静态库
+          VER=${{ steps.lua.outputs.version }}
+          wget https://www.lua.org/ftp/lua-$VER.tar.gz
+          tar xf lua-$VER.tar.gz
+          cd lua-$VER
           make clean
-          # 直接编译静态库和可执行文件（我们只需要 liblua.a，但编译过程需要 lua 可执行文件？不，我们只需要库）
-          # 这里我们只编译 liblua.a，使用交叉编译器
+          # 编译静态库 liblua.a
           make CC=$CC AR="$AR rcu" RANLIB=$RANLIB INSTALL_TOP=$PWD/install MYCFLAGS="-fPIE" MYLDFLAGS="-pie" liblua.a
-          # 安装头文件和库
           mkdir -p $PWD/install/include $PWD/install/lib
           cp *.h $PWD/install/include/
           cp liblua.a $PWD/install/lib/
@@ -114,17 +120,16 @@ jobs:
       # --- 下载并编译 nmap（静态）---
       - name: Download nmap source
         run: |
-          wget "${{ steps.nmap.outputs.url }}"
-          tar xf nmap-*.tar.bz2
-          cd nmap-*
-          echo "NMAP_SRC_DIR=$PWD" >> $GITHUB_ENV
+          VER=${{ steps.nmap.outputs.version }}
+          wget https://nmap.org/dist/nmap-$VER.tar.bz2
+          tar xf nmap-$VER.tar.bz2
+          echo "NMAP_SRC_DIR=$PWD/nmap-$VER" >> $GITHUB_ENV
 
       - name: Configure nmap (static)
         run: |
           cd $NMAP_SRC_DIR
           export CPPFLAGS="-I$OPENSSL_DIR/include -I$LIBPCAP_DIR/include -I$LUA_DIR/include"
           export LDFLAGS="-L$OPENSSL_DIR/lib -L$LIBPCAP_DIR/lib -L$LUA_DIR/lib"
-          # 预先设置一些交叉编译的缓存变量，避免 configure 测试失败
           export ac_cv_func_malloc_0_nonnull=yes
           export ac_cv_func_realloc_0_nonnull=yes
           export lt_cv_sys_max_cmd_len=32768
@@ -145,8 +150,6 @@ jobs:
       - name: Compile nmap (static)
         run: |
           cd $NMAP_SRC_DIR
-          # 静态链接，并添加页对齐选项（尽管 nmap 可能不需要，但增加保险）
-          # 库顺序很重要：先 lua, pcap, 后 ssl, crypto, m
           make -j$(nproc) LDFLAGS="$LDFLAGS -static -pie -Wl,-z,max-page-size=0x1000 -Wl,-z,common-page-size=0x1000" LIBS="-llua -lpcap -lssl -lcrypto -lm"
           make install
 
