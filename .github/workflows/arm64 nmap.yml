@@ -79,8 +79,8 @@ jobs:
       - name: Build PCRE (static)
         run: |
           VER=${{ steps.pcre.outputs.version }}
-          wget --no-check-certificate https://ftp.pcre.org/pub/pcre/pcre-$VER.tar.gz
-          tar xf pcre-$VER.tar.gz; cd pcre-$VER
+          wget https://sourceforge.net/projects/pcre/files/pcre/$VER/pcre-$VER.tar.bz2/download -O pcre-$VER.tar.bz2
+          tar xf pcre-$VER.tar.bz2; cd pcre-$VER
           ./configure --host=$TARGET --prefix=$PWD/install --disable-shared --enable-static --disable-cpp --disable-pcregrep-libz --disable-pcregrep-libbz2
           make -j$(nproc); make install
           echo "PCRE_DIR=$PWD/install" >> $GITHUB_ENV; cd ..
@@ -95,9 +95,10 @@ jobs:
           rm -rf $NMAP_SRC_DIR/liblua $NMAP_SRC_DIR/libpcre $NMAP_SRC_DIR/libssh2 $NMAP_SRC_DIR/liblinear $NMAP_SRC_DIR/nping
       - name: Check static libraries
         run: |
-          for dir in OPENSSL_DIR LIBPCAP_DIR LUA_DIR PCRE_DIR; do
-            if [ ! -f "${!dir}/lib/lib${dir%%_*}.a" ]; then echo "${dir} lib not found"; exit 1; fi
-          done
+          [ -f "$OPENSSL_DIR/lib/libssl.a" ] && [ -f "$OPENSSL_DIR/lib/libcrypto.a" ] || { echo "OpenSSL lib missing"; exit 1; }
+          [ -f "$LIBPCAP_DIR/lib/libpcap.a" ] || { echo "libpcap missing"; exit 1; }
+          [ -f "$LUA_DIR/lib/liblua.a" ] || { echo "Lua missing"; exit 1; }
+          [ -f "$PCRE_DIR/lib/libpcre.a" ] || { echo "PCRE missing"; exit 1; }
       - name: Configure nmap
         run: |
           cd $NMAP_SRC_DIR
