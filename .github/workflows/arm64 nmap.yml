@@ -57,6 +57,13 @@ jobs:
           VERSION=$(curl -s https://www.lua.org/ftp/ | grep -oP 'lua-5\.4\.\d+' | sort -V | tail -n1 | sed 's/lua-//')
           echo "version=${VERSION:-5.4.6}" >> $GITHUB_OUTPUT
 
+      - name: Get latest PCRE version
+        id: pcre
+        run: |
+          # PCRE 8.x 系列（经典版本）
+          VERSION=$(curl -s https://ftp.pcre.org/pub/pcre/ | grep -oP 'pcre-8\.\d+' | sort -V | tail -n1 | sed 's/pcre-//')
+          echo "version=${VERSION:-8.45}" >> $GITHUB_OUTPUT
+
       - name: Get latest nmap version
         id: nmap
         run: |
@@ -117,6 +124,20 @@ jobs:
           echo "LUA_DIR=$PWD/../install" >> $GITHUB_ENV
           cd ../..
 
+      # --- 编译 PCRE（静态）---
+      - name: Build PCRE (static)
+        run: |
+          VER=${{ steps.pcre.outputs.version }}
+          wget https://ftp.pcre.org/pub/pcre/pcre-$VER.tar.gz
+          tar xf pcre-$VER.tar.gz
+          cd pcre-$VER
+          ./configure --host=$TARGET --prefix=$PWD/install --disable-shared --enable-static \
+                      --disable-cpp --disable-pcregrep-libz --disable-pcregrep-libbz2
+          make -j$(nproc)
+          make install
+          echo "PCRE_DIR=$PWD/install" >> $GITHUB_ENV
+          cd ..
+
       # --- 下载 nmap 源码 ---
       - name: Download nmap source
         run: |
@@ -125,7 +146,7 @@ jobs:
           tar xf nmap-$VER.tar.bz2
           echo "NMAP_SRC_DIR=$PWD/nmap-$VER" >> $GITHUB_ENV
 
-      # 第一次删除内部库目录（在 configure 前彻底清理）
+      # 彻底删除内部可能干扰的库目录（在 configure 前）
       - name: Remove internal libraries (before configure)
         run: |
           rm -rf $NMAP_SRC_DIR/liblua
@@ -146,13 +167,16 @@ jobs:
           echo "Lua dir: $LUA_DIR"
           ls -l $LUA_DIR/lib/
           if [ ! -f "$LUA_DIR/lib/liblua.a" ]; then echo "liblua.a not found"; exit 1; fi
+          echo "PCRE dir: $PCRE_DIR"
+          ls -l $PCRE_DIR/lib/
+          if [ ! -f "$PCRE_DIR/lib/libpcre.a" ]; then echo "libpcre.a not found"; exit 1; fi
           echo "All static libraries found."
 
-      - name: Configure nmap (static, minimal features)
+      - name: Configure nmap (static, external PCRE)
         run: |
           cd $NMAP_SRC_DIR
-          export CPPFLAGS="-I$OPENSSL_DIR/include -I$LIBPCAP_DIR/include -I$LUA_DIR/include"
-          export LDFLAGS="-L$OPENSSL_DIR/lib -L$LIBPCAP_DIR/lib -L$LUA_DIR/lib"
+          export CPPFLAGS="-I$OPENSSL_DIR/include -I$LIBPCAP_DIR/include -I$LUA_DIR/include -I$PCRE_DIR/include"
+          export LDFLAGS="-L$OPENSSL_DIR/lib -L$LIBPCAP_DIR/lib -L$LUA_DIR/lib -L$PCRE_DIR/lib"
           # 预设置交叉编译缓存变量，避免 configure 测试失败
           export ac_cv_func_malloc_0_nonnull=yes
           export ac_cv_func_realloc_0_nonnull=yes
@@ -168,17 +192,17 @@ jobs:
             --without-nping \
             --without-libssh \
             --without-libssh2 \
-            --without-pcre \
             --without-liblinear \
             --without-dnet \
             --with-pcap=linux \
             --with-openssl=$OPENSSL_DIR \
             --with-liblua=$LUA_DIR \
             --with-libpcap=$LIBPCAP_DIR \
+            --with-pcre=$PCRE_DIR \
             --enable-static \
             --disable-shared
 
-      # 第二次删除内部库目录（在 make 前再次确保）
+      # 再次删除内部库目录（确保 make 时找不到内部目录，强制使用外部）
       - name: Remove internal libraries again (before make)
         run: |
           rm -rf $NMAP_SRC_DIR/liblua
@@ -190,7 +214,8 @@ jobs:
       - name: Compile nmap (static) with verbose output
         run: |
           cd $NMAP_SRC_DIR
-          make V=1 LDFLAGS="$LDFLAGS -static -pie -Wl,-z,max-page-size=0x1000 -Wl,-z,common-page-size=0x1000" LIBS="-llua -lpcap -lssl -lcrypto -lm"
+          # 链接时添加所有必要的库，顺序很重要
+          make V=1 LDFLAGS="$LDFLAGS -static -pie -Wl,-z,max-page-size=0x1000 -Wl,-z,common-page-size=0x1000" LIBS="-llua -lpcap -lpcre -lssl -lcrypto -lm"
           make install
 
       - name: Strip and package
@@ -206,4 +231,3 @@ jobs:
         with:
           name: nmap-android-static
           path: nmap-android-static.tar.gz
-  
