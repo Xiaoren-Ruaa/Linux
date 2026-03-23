@@ -30,7 +30,7 @@ jobs:
       - name: Configure Git
         run: |
           git config --global user.email "1586583684@qq.com"
-          git config --global user.name "Xiaoren-Ruaa"
+          git config --global user.name "6ef1c6c"
 
       - name: Generate commits
         env:
