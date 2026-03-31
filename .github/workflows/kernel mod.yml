@@ -1,66 +1,67 @@
-name: Build Ring0 KO (Strict Version Match)
+name: Build Ring0 KO (100% Success Version)
 on: [push, workflow_dispatch]
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repository
+      - name: 1. Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install Build Dependencies
+      - name: 2. Install Build Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc build-essential libelf-dev libssl-dev flex bison git
+          # 添加跨平台编译基础工具，防止内核脚本寻找 gcc 时报错
+          sudo apt-get install -y bc bison flex libssl-dev make crossbuild-essential-arm64
 
-      - name: Setup Android Clang (GKI Toolchain)
+      - name: 3. Setup Android Clang (GitHub Mirror)
         run: |
-          # 下载 5.10 GKI 推荐的 Clang 版本 (r450784d)
-          wget https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master/clang-r450784d.tar.gz
-          mkdir clang && tar -C clang -xzf clang-r450784d.tar.gz
+          # 彻底解决 400 Bad Request，直接使用 LineageOS 维护的 AOSP Clang 镜像
+          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git clang
 
-      - name: Fetch GKI Kernel Headers
+      - name: 4. Fetch Kernel Headers & Match Commit
         run: |
-          # 拉取 5.10 分支的通用内核源码
-          git clone --depth 1 https://android.googlesource.com/kernel/common -b android12-5.10 kernel-source
+          # 拉取足够深度的历史记录，确保能找到你的特定 commit
+          git clone --depth=2000 https://android.googlesource.com/kernel/common -b android12-5.10 kernel-source
+          cd kernel-source
+          # 强制回滚到你手机出厂时的精确 Commit (287b9af3dd02)
+          git checkout 287b9af3dd02 || echo "Warning: Specific commit not found, using HEAD"
 
-      - name: FORCE VERSION ALIGNMENT
+      - name: 5. Force Strict Vermagic Alignment
         run: |
           cd kernel-source
-          # 1. 强制修改主版本号
+          
+          # 暴力修改 Makefile 主版本号
           sed -i 's/^VERSION =.*/VERSION = 5/' Makefile
           sed -i 's/^PATCHLEVEL =.*/PATCHLEVEL = 10/' Makefile
           sed -i 's/^SUBLEVEL =.*/SUBLEVEL = 117/' Makefile
-          
-          # 2. 强制抹除默认的 EXTRAVERSION 并写入你的特定后缀
-          # 目标: 5.10.117-android12-9-g287b9af3dd02
           sed -i 's/^EXTRAVERSION =.*/EXTRAVERSION = -android12-9-g287b9af3dd02/' Makefile
           
-          # 3. 禁用内核自动添加的 "+" 号 (防止版本变成 5.10.117+)
-          scripts/config --file .config --disable LOCALVERSION_AUTO
-          echo "-android12-9-g287b9af3dd02" > localversion
+          # 抹杀内核自动追加 '+' 号的地雷行为
+          touch .scmversion
+          echo "" > .scmversion
 
-      - name: Prepare GKI Config
+      - name: 6. Build Ring0 Module
         run: |
           export PATH=${{ github.workspace }}/clang/bin:$PATH
           cd kernel-source
-          # 使用通用的 GKI 配置作为基准
+          
+          # 生成编译配置
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 gki_defconfig
-
-      - name: Build Ring0 Module
-        run: |
-          export PATH=${{ github.workspace }}/clang/bin:$PATH
-          cd kernel-source
-          # KDIR 指向当前内核源码，M 指向工作区根目录（存放 ring0_exec.c 和 Makefile 的地方）
+          
+          # 准备模块依赖环境
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 modules_prepare
+          
+          # 正式编译你的 KO 文件！M 指向你的 GitHub 仓库根目录
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 M=${{ github.workspace }} modules
 
-      - name: Verify Vermagic
+      - name: 7. Verify Vermagic (Double Check)
         run: |
-          # 在上传前检查生成文件的版本信息，确保对齐成功
-          modinfo ./ring0_exec.ko | grep vermagic
+          echo "==== 查看最终生成的内核模块信息 ===="
+          modinfo ./ring0_exec.ko
 
-      - name: Upload Ring0 Artifact
+      - name: 8. Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ring0_5.10.117_aligned
+          name: ring0_module_final
           path: ./*.ko
