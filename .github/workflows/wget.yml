@@ -14,210 +14,146 @@ jobs:
         arch: [aarch64]
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    - uses: actions/checkout@v4
 
-      - name: Setup NDK
-        uses: nttld/setup-ndk@v1
-        with:
-          ndk-version: '26.1.10909125'
+    - name: Setup NDK
+      run: |
+        wget -q https://dl.google.com/android/repository/android-ndk-r26b-linux.zip
+        unzip -q android-ndk-r26b-linux.zip -d /tmp
+        mv /tmp/android-ndk-r26b $HOME/android-ndk
+        echo "$HOME/android-ndk" >> $GITHUB_PATH
 
-      - name: Setup environment
-        run: |
-          ARCH=${{ matrix.arch }}
-          case $ARCH in
-            aarch64)
-              HOST=aarch64-linux-android
-              TOOLCHAIN=aarch64-linux-android33
-              ;;
-          esac
+    - name: Build ncurses
+      run: |
+        ARCH=${{ matrix.arch }}
+        case $ARCH in
+          aarch64)
+            HOST=aarch64-linux-android
+            TOOLCHAIN=aarch64-linux-android33
+            ;;
+        esac
+        
+        TOOLCHAIN_PATH=$HOME/android-ndk/toolchains/llvm/prebuilt/linux-x86_64
+        export PATH=$TOOLCHAIN_PATH/bin:$PATH
+        
+        mkdir -p deps && cd deps
+        
+        curl -L -o ncurses-6.4.tar.gz https://ftp.gnu.org/pub/gnu/ncurses/ncurses-6.4.tar.gz
+        tar -xf ncurses-6.4.tar.gz
+        cd ncurses-6.4
+        
+        ./configure \
+          --host=$HOST \
+          --disable-shared \
+          --enable-static \
+          --without-debug \
+          --without-ada \
+          --without-manpages \
+          --without-tests \
+          --without-progs \
+          --with-normal \
+          --without-cxx \
+          --without-cxx-binding \
+          --prefix=$(pwd)/install \
+          CC="$TOOLCHAIN_PATH/bin/$TOOLCHAIN-clang" \
+          AR="$TOOLCHAIN_PATH/bin/llvm-ar" \
+          RANLIB="$TOOLCHAIN_PATH/bin/llvm-ranlib" \
+          CFLAGS="-static -Os -s -fPIE" \
+          LDFLAGS="-static -s -fPIE"
+        
+        make -j$(nproc)
+        make install
+        cd ..
 
-          NDK=$(dirname $(which ndk-build))/..
-          TOOLCHAIN_PATH=$NDK/toolchains/llvm/prebuilt/linux-x86_64
-          export PATH=$TOOLCHAIN_PATH/bin:$PATH
+    - name: Build readline
+      run: |
+        ARCH=${{ matrix.arch }}
+        case $ARCH in
+          aarch64)
+            HOST=aarch64-linux-android
+            TOOLCHAIN=aarch64-linux-android33
+            ;;
+        esac
+        
+        TOOLCHAIN_PATH=$HOME/android-ndk/toolchains/llvm/prebuilt/linux-x86_64
+        export PATH=$TOOLCHAIN_PATH/bin:$PATH
+        
+        cd deps
+        
+        curl -L -o readline-8.2.tar.gz https://ftp.gnu.org/gnu/readline/readline-8.2.tar.gz
+        tar -xf readline-8.2.tar.gz
+        cd readline-8.2
+        
+        sed -i 's/-D_FORTIFY_SOURCE=2//g' support/shobj-conf
+        
+        ./configure \
+          --host=$HOST \
+          --disable-shared \
+          --enable-static \
+          --prefix=$(pwd)/install \
+          bash_cv_wcwidth_broken=no \
+          CC="$TOOLCHAIN_PATH/bin/$TOOLCHAIN-clang" \
+          AR="$TOOLCHAIN_PATH/bin/llvm-ar" \
+          RANLIB="$TOOLCHAIN_PATH/bin/llvm-ranlib" \
+          CFLAGS="-static -Os -s -fPIE -I$(pwd)/../ncurses-6.4/install/include" \
+          LDFLAGS="-static -s -fPIE -L$(pwd)/../ncurses-6.4/install/lib"
+        
+        make -j$(nproc)
+        make install
+        cd ../..
 
-          # Save variables for later steps
-          echo "HOST=$HOST" >> $GITHUB_ENV
-          echo "TOOLCHAIN=$TOOLCHAIN" >> $GITHUB_ENV
-          echo "TOOLCHAIN_PATH=$TOOLCHAIN_PATH" >> $GITHUB_ENV
-          echo "ARCH=$ARCH" >> $GITHUB_ENV
+    - name: Build bash
+      run: |
+        ARCH=${{ matrix.arch }}
+        case $ARCH in
+          aarch64)
+            HOST=aarch64-linux-android
+            TOOLCHAIN=aarch64-linux-android33
+            ;;
+        esac
+        
+        TOOLCHAIN_PATH=$HOME/android-ndk/toolchains/llvm/prebuilt/linux-x86_64
+        export PATH=$TOOLCHAIN_PATH/bin:$PATH
+        
+        mkdir -p build && cd build
+        
+        curl -L -o bash-5.2.tar.gz https://ftp.gnu.org/gnu/bash/bash-5.2.tar.gz
+        tar -xf bash-5.2.tar.gz
+        cd bash-5.2
+        
+        ./configure \
+          --host=$HOST \
+          --disable-shared \
+          --enable-static-link \
+          --enable-readline \
+          --with-installed-readline=$(pwd)/../../deps/readline-8.2/install \
+          --with-curses \
+          --prefix=/system \
+          CC="$TOOLCHAIN_PATH/bin/$TOOLCHAIN-clang" \
+          AR="$TOOLCHAIN_PATH/bin/llvm-ar" \
+          RANLIB="$TOOLCHAIN_PATH/bin/llvm-ranlib" \
+          CFLAGS="-static -Os -s -fPIE -I$(pwd)/../../deps/readline-8.2/install/include -I$(pwd)/../../deps/ncurses-6.4/install/include" \
+          LDFLAGS="-static -s -fPIE -L$(pwd)/../../deps/readline-8.2/install/lib -L$(pwd)/../../deps/ncurses-6.4/install/lib" \
+          LIBS="-lreadline -lncursesw -ltinfo"
+        
+        make -j$(nproc) bash
+        $TOOLCHAIN_PATH/bin/llvm-strip --strip-all bash
+        cp bash ../../bash-static-$ARCH
+        cd ../..
 
-      - name: Build dependencies
-        run: |
-          mkdir -p deps && cd deps
+    - name: Test binary
+      run: |
+        chmod +x bash-static-${{ matrix.arch }}
+        file bash-static-${{ matrix.arch }}
+        ls -lh bash-static-${{ matrix.arch }}
+        ./bash-static-${{ matrix.arch }} --version
 
-          # Build readline
-          echo "Building readline..."
-          curl -L -o readline-8.2.tar.gz https://ftp.gnu.org/gnu/readline/readline-8.2.tar.gz
-          tar -xf readline-8.2.tar.gz
-          cd readline-8.2
+    - uses: actions/upload-artifact@v4
+      with:
+        name: bash-static-${{ matrix.arch }}
+        path: bash-static-${{ matrix.arch }}
 
-          ./configure \
-            --host=${{ env.HOST }} \
-            --disable-shared \
-            --enable-static \
-            --prefix=$(pwd)/install \
-            bash_cv_wcwidth_broken=no \
-            CC="${{ env.TOOLCHAIN_PATH }}/bin/${{ env.TOOLCHAIN }}-clang" \
-            AR="${{ env.TOOLCHAIN_PATH }}/bin/llvm-ar" \
-            RANLIB="${{ env.TOOLCHAIN_PATH }}/bin/llvm-ranlib" \
-            CFLAGS="-static -Os -s -fPIE" \
-            LDFLAGS="-static -s -fPIE"
-
-          make -j$(nproc)
-          make install
-
-          cd ../..
-
-          # Build ncurses
-          echo "Building ncurses..."
-          mkdir -p ncurses && cd ncurses
-          curl -L -o ncurses-6.4.tar.gz https://ftp.gnu.org/pub/gnu/ncurses/ncurses-6.4.tar.gz
-          tar -xf ncurses-6.4.tar.gz
-          cd ncurses-6.4
-
-          ./configure \
-            --host=${{ env.HOST }} \
-            --disable-shared \
-            --enable-static \
-            --without-debug \
-            --without-ada \
-            --without-manpages \
-            --without-tests \
-            --without-progs \
-            --with-normal \
-            --without-cxx \
-            --without-cxx-binding \
-            --prefix=$(pwd)/install \
-            CC="${{ env.TOOLCHAIN_PATH }}/bin/${{ env.TOOLCHAIN }}-clang" \
-            AR="${{ env.TOOLCHAIN_PATH }}/bin/llvm-ar" \
-            RANLIB="${{ env.TOOLCHAIN_PATH }}/bin/llvm-ranlib" \
-            CFLAGS="-static -Os -s -fPIE" \
-            LDFLAGS="-static -s -fPIE"
-
-          make -j$(nproc)
-          make install
-
-          cd ../..
-
-      - name: Build bash
-        run: |
-          mkdir -p build && cd build
-
-          echo "Building bash..."
-          curl -L -o bash-5.2.tar.gz https://ftp.gnu.org/gnu/bash/bash-5.2.tar.gz
-          tar -xf bash-5.2.tar.gz
-          cd bash-5.2
-
-          # Apply patch to fix static build if needed
-          cat > fix-static.patch << 'EOF'
---- a/configure
-+++ b/configure
-@@ -14815,7 +14815,7 @@
- /* end confdefs.h.  */
- #include <ctype.h>
- #include <stdlib.h>
--#if ((' ' & 0x0FF) == 0x020)
-+#if 0
- # define ISLOWER(c) ('a' <= (c) && (c) <= 'z')
- # define TOUPPER(c) (ISLOWER(c) ? 'A' + ((c) - 'a') : (c))
- #else
-EOF
-
-          patch -p1 < fix-static.patch || true
-
-          # Configure with all features
-          ./configure \
-            --host=${{ env.HOST }} \
-            --disable-shared \
-            --enable-static \
-            --enable-readline \
-            --enable-history \
-            --enable-alias \
-            --enable-arith-for-command \
-            --enable-array-variables \
-            --enable-bang-history \
-            --enable-brace-expansion \
-            --enable-cond-command \
-            --enable-cond-regexp \
-            --enable-directory-stack \
-            --enable-disabled-builtins \
-            --enable-dparen-arithmetic \
-            --enable-extended-glob \
-            --enable-function-import \
-            --enable-glob-asciirange-default \
-            --enable-help-builtin \
-            --enable-job-control \
-            --enable-multibyte \
-            --enable-net-redirections \
-            --enable-process-substitution \
-            --enable-progcomp \
-            --enable-prompt-string-decoding \
-            --enable-select \
-            --enable-separate-helpfiles \
-            --enable-single-help-strings \
-            --enable-strict-posix-default \
-            --enable-usg-echo-default \
-            --enable-xpg-echo-default \
-            --enable-mem-scramble \
-            --enable-debugger \
-            --enable-direxpand-default \
-            --enable-disabled-builtins \
-            --with-bash-malloc \
-            --with-curses \
-            --with-installed-readline \
-            --prefix=$(pwd)/install \
-            CC="${{ env.TOOLCHAIN_PATH }}/bin/${{ env.TOOLCHAIN }}-clang" \
-            AR="${{ env.TOOLCHAIN_PATH }}/bin/llvm-ar" \
-            RANLIB="${{ env.TOOLCHAIN_PATH }}/bin/llvm-ranlib" \
-            CFLAGS="-static -Os -s -fPIE -I$(pwd)/../../deps/readline-8.2/install/include -I$(pwd)/../../deps/ncurses/ncurses-6.4/install/include" \
-            LDFLAGS="-static -s -fPIE -L$(pwd)/../../deps/readline-8.2/install/lib -L$(pwd)/../../deps/ncurses/ncurses-6.4/install/lib" \
-            LIBS="-lreadline -lncursesw -ltinfo"
-
-          make -j$(nproc)
-
-          # Verify binary is static
-          if file bash | grep -q "statically linked"; then
-            echo "✅ Binary is statically linked"
-          else
-            echo "❌ Binary is not statically linked"
-            exit 1
-          fi
-
-          # Strip binary
-          ${{ env.TOOLCHAIN_PATH }}/bin/llvm-strip --strip-all bash
-
-          # Copy final binary
-          cp bash ../../bash-static-${{ env.ARCH }}
-
-          cd ../..
-
-      - name: Test binary
-        run: |
-          echo "=== Testing bash binary ==="
-          chmod +x bash-static-${{ env.ARCH }}
-
-          # Quick version test
-          echo "Bash version:"
-          ./bash-static-${{ env.ARCH }} --version
-
-          echo -e "\nBinary info:"
-          file bash-static-${{ env.ARCH }}
-          ls -lh bash-static-${{ env.ARCH }}
-
-          echo -e "\nLinked libraries:"
-          ldd ./bash-static-${{ env.ARCH }} 2>/dev/null || echo "Static binary (no dynamic dependencies)"
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: bash-static-${{ env.ARCH }}
-          path: bash-static-${{ env.ARCH }}
-
-      - name: Create release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            bash-static-${{ env.ARCH }}
-          draft: false
+    - uses: softprops/action-gh-release@v1
+      if: startsWith(github.ref, 'refs/tags/v')
+      with:
+        files: bash-static-${{ matrix.arch }}
