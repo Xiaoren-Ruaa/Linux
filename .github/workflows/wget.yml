@@ -1,4 +1,4 @@
-name: Build Static wget
+name: Build Static bash
 
 on:
   workflow_dispatch:
@@ -14,129 +14,210 @@ jobs:
         arch: [aarch64]
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Setup NDK
-      uses: nttld/setup-ndk@v1
-      with:
-        ndk-version: '26.1.10909125'
+      - name: Setup NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: '26.1.10909125'
 
-    - name: Build wget
-      run: |
-        ARCH=${{ matrix.arch }}
-        case $ARCH in
-          aarch64)
-            HOST=aarch64-linux-android
-            TOOLCHAIN=aarch64-linux-android33
-            ;;
-        esac
+      - name: Setup environment
+        run: |
+          ARCH=${{ matrix.arch }}
+          case $ARCH in
+            aarch64)
+              HOST=aarch64-linux-android
+              TOOLCHAIN=aarch64-linux-android33
+              ;;
+          esac
 
-        NDK=$(dirname $(which ndk-build))/..
-        TOOLCHAIN_PATH=$NDK/toolchains/llvm/prebuilt/linux-x86_64
-        export PATH=$TOOLCHAIN_PATH/bin:$PATH
+          NDK=$(dirname $(which ndk-build))/..
+          TOOLCHAIN_PATH=$NDK/toolchains/llvm/prebuilt/linux-x86_64
+          export PATH=$TOOLCHAIN_PATH/bin:$PATH
 
-        mkdir -p build
-        cd build
+          # Save variables for later steps
+          echo "HOST=$HOST" >> $GITHUB_ENV
+          echo "TOOLCHAIN=$TOOLCHAIN" >> $GITHUB_ENV
+          echo "TOOLCHAIN_PATH=$TOOLCHAIN_PATH" >> $GITHUB_ENV
+          echo "ARCH=$ARCH" >> $GITHUB_ENV
 
-        WGET_VER="1.21.4"
-        curl -L -o wget-$WGET_VER.tar.gz https://ftp.gnu.org/gnu/wget/wget-$WGET_VER.tar.gz
-        tar -xf wget-$WGET_VER.tar.gz
-        cd wget-$WGET_VER
+      - name: Build dependencies
+        run: |
+          mkdir -p deps && cd deps
 
-        cat > disable-cert.patch << 'EOF'
---- a/lib/gnutls.c
-+++ b/lib/gnutls.c
-@@ -76,6 +76,8 @@ gnutls_init (void)
-     return;
- 
-   gnutls_global_init ();
-+  gnutls_global_set_log_level(0);
-+  gnutls_certificate_set_verify_flags (x509_cred, GNUTLS_VERIFY_DISABLE_CRL_CHECKS | GNUTLS_VERIFY_DISABLE_TIME_CHECKS);
- }
- 
- /* Sets up the certificate and key files for authentication.  */
-@@ -93,7 +95,6 @@ gnutls_certificate (void)
-     gnutls_certificate_free_credentials (x509_cred);
- 
-   gnutls_certificate_allocate_credentials (&x509_cred);
--  gnutls_certificate_set_verify_flags (x509_cred, GNUTLS_VERIFY_DISABLE_CRL_CHECKS);
- 
-   if (opt.cert_file)
-     gnutls_certificate_set_x509_key_file (x509_cred,
-@@ -135,9 +136,6 @@ gnutls_connect (int fd, const char *hostname)
-   /* Use default priorities.  */
-   gnutls_set_default_priority (session);
- 
--  /* Set the verification flags.  */
--  gnutls_certificate_set_verify_flags (x509_cred, GNUTLS_VERIFY_DISABLE_CRL_CHECKS);
--
-   /* Put the x509 credentials to the current session.  */
-   gnutls_credentials_set (session, GNUTLS_CRD_CERTIFICATE, x509_cred);
- 
-@@ -164,14 +162,8 @@ gnutls_connect (int fd, const char *hostname)
-       return false;
-     }
- 
--  /* Verify the server's certificate.  */
--  unsigned int status;
--  ret = gnutls_certificate_verify_peers3 (session, hostname, &status);
--  if (ret < 0 || status != 0)
--    {
--      logprintf (LOG_NOTQUIET, _("Certificate verification failed for %s.\n"), hostname);
--      return false;
--    }
-+  // 完全跳过证书验证
-+  logprintf (LOG_VERBOSE, _("Skipping certificate verification for %s.\n"), hostname);
- 
-   return true;
- }
+          # Build readline
+          echo "Building readline..."
+          curl -L -o readline-8.2.tar.gz https://ftp.gnu.org/gnu/readline/readline-8.2.tar.gz
+          tar -xf readline-8.2.tar.gz
+          cd readline-8.2
+
+          ./configure \
+            --host=${{ env.HOST }} \
+            --disable-shared \
+            --enable-static \
+            --prefix=$(pwd)/install \
+            bash_cv_wcwidth_broken=no \
+            CC="${{ env.TOOLCHAIN_PATH }}/bin/${{ env.TOOLCHAIN }}-clang" \
+            AR="${{ env.TOOLCHAIN_PATH }}/bin/llvm-ar" \
+            RANLIB="${{ env.TOOLCHAIN_PATH }}/bin/llvm-ranlib" \
+            CFLAGS="-static -Os -s -fPIE" \
+            LDFLAGS="-static -s -fPIE"
+
+          make -j$(nproc)
+          make install
+
+          cd ../..
+
+          # Build ncurses
+          echo "Building ncurses..."
+          mkdir -p ncurses && cd ncurses
+          curl -L -o ncurses-6.4.tar.gz https://ftp.gnu.org/pub/gnu/ncurses/ncurses-6.4.tar.gz
+          tar -xf ncurses-6.4.tar.gz
+          cd ncurses-6.4
+
+          ./configure \
+            --host=${{ env.HOST }} \
+            --disable-shared \
+            --enable-static \
+            --without-debug \
+            --without-ada \
+            --without-manpages \
+            --without-tests \
+            --without-progs \
+            --with-normal \
+            --without-cxx \
+            --without-cxx-binding \
+            --prefix=$(pwd)/install \
+            CC="${{ env.TOOLCHAIN_PATH }}/bin/${{ env.TOOLCHAIN }}-clang" \
+            AR="${{ env.TOOLCHAIN_PATH }}/bin/llvm-ar" \
+            RANLIB="${{ env.TOOLCHAIN_PATH }}/bin/llvm-ranlib" \
+            CFLAGS="-static -Os -s -fPIE" \
+            LDFLAGS="-static -s -fPIE"
+
+          make -j$(nproc)
+          make install
+
+          cd ../..
+
+      - name: Build bash
+        run: |
+          mkdir -p build && cd build
+
+          echo "Building bash..."
+          curl -L -o bash-5.2.tar.gz https://ftp.gnu.org/gnu/bash/bash-5.2.tar.gz
+          tar -xf bash-5.2.tar.gz
+          cd bash-5.2
+
+          # Apply patch to fix static build if needed
+          cat > fix-static.patch << 'EOF'
+--- a/configure
++++ b/configure
+@@ -14815,7 +14815,7 @@
+ /* end confdefs.h.  */
+ #include <ctype.h>
+ #include <stdlib.h>
+-#if ((' ' & 0x0FF) == 0x020)
++#if 0
+ # define ISLOWER(c) ('a' <= (c) && (c) <= 'z')
+ # define TOUPPER(c) (ISLOWER(c) ? 'A' + ((c) - 'a') : (c))
+ #else
 EOF
 
-        patch -p1 < disable-cert.patch
+          patch -p1 < fix-static.patch || true
 
-        ./configure \
-          --host=$HOST \
-          --disable-shared \
-          --enable-static \
-          --with-ssl=gnutls \
-          --disable-nls \
-          --disable-iri \
-          --disable-rpath \
-          --without-libpsl \
-          --without-libiconv-prefix \
-          --without-libintl-prefix \
-          --without-libuuid \
-          --without-libidn \
-          CFLAGS="-static -Os -s -fPIE -DGNUTLS_VERIFY_DISABLE_CRL_CHECKS -DGNUTLS_VERIFY_DISABLE_TIME_CHECKS" \
-          LDFLAGS="-static -s -fPIE" \
-          CC="$TOOLCHAIN_PATH/bin/$TOOLCHAIN-clang" \
-          AR="$TOOLCHAIN_PATH/bin/llvm-ar" \
-          RANLIB="$TOOLCHAIN_PATH/bin/llvm-ranlib" \
-          STRIP="$TOOLCHAIN_PATH/bin/llvm-strip"
+          # Configure with all features
+          ./configure \
+            --host=${{ env.HOST }} \
+            --disable-shared \
+            --enable-static \
+            --enable-readline \
+            --enable-history \
+            --enable-alias \
+            --enable-arith-for-command \
+            --enable-array-variables \
+            --enable-bang-history \
+            --enable-brace-expansion \
+            --enable-cond-command \
+            --enable-cond-regexp \
+            --enable-directory-stack \
+            --enable-disabled-builtins \
+            --enable-dparen-arithmetic \
+            --enable-extended-glob \
+            --enable-function-import \
+            --enable-glob-asciirange-default \
+            --enable-help-builtin \
+            --enable-job-control \
+            --enable-multibyte \
+            --enable-net-redirections \
+            --enable-process-substitution \
+            --enable-progcomp \
+            --enable-prompt-string-decoding \
+            --enable-select \
+            --enable-separate-helpfiles \
+            --enable-single-help-strings \
+            --enable-strict-posix-default \
+            --enable-usg-echo-default \
+            --enable-xpg-echo-default \
+            --enable-mem-scramble \
+            --enable-debugger \
+            --enable-direxpand-default \
+            --enable-disabled-builtins \
+            --with-bash-malloc \
+            --with-curses \
+            --with-installed-readline \
+            --prefix=$(pwd)/install \
+            CC="${{ env.TOOLCHAIN_PATH }}/bin/${{ env.TOOLCHAIN }}-clang" \
+            AR="${{ env.TOOLCHAIN_PATH }}/bin/llvm-ar" \
+            RANLIB="${{ env.TOOLCHAIN_PATH }}/bin/llvm-ranlib" \
+            CFLAGS="-static -Os -s -fPIE -I$(pwd)/../../deps/readline-8.2/install/include -I$(pwd)/../../deps/ncurses/ncurses-6.4/install/include" \
+            LDFLAGS="-static -s -fPIE -L$(pwd)/../../deps/readline-8.2/install/lib -L$(pwd)/../../deps/ncurses/ncurses-6.4/install/lib" \
+            LIBS="-lreadline -lncursesw -ltinfo"
 
-        make -j$(nproc) wget
+          make -j$(nproc)
 
-        $TOOLCHAIN_PATH/bin/llvm-strip --strip-all src/wget
-        cp src/wget ../../wget-static-$ARCH
+          # Verify binary is static
+          if file bash | grep -q "statically linked"; then
+            echo "✅ Binary is statically linked"
+          else
+            echo "❌ Binary is not statically linked"
+            exit 1
+          fi
 
-        cd ../..
-        echo "=== Build Info ==="
-        file wget-static-$ARCH
-        ls -lh wget-static-$ARCH
-        echo "=== Test wget ==="
-        ./wget-static-$ARCH --version || true
+          # Strip binary
+          ${{ env.TOOLCHAIN_PATH }}/bin/llvm-strip --strip-all bash
 
-    - name: Upload Binary
-      uses: actions/upload-artifact@v4
-      with:
-        name: wget-${{ matrix.arch }}
-        path: wget-static-${{ matrix.arch }}
+          # Copy final binary
+          cp bash ../../bash-static-${{ env.ARCH }}
 
-    - name: Create Release
-      if: startsWith(github.ref, 'refs/tags/v')
-      uses: softprops/action-gh-release@v1
-      with:
-        files: |
-          wget-static-${{ matrix.arch }}
-        draft: false
+          cd ../..
+
+      - name: Test binary
+        run: |
+          echo "=== Testing bash binary ==="
+          chmod +x bash-static-${{ env.ARCH }}
+
+          # Quick version test
+          echo "Bash version:"
+          ./bash-static-${{ env.ARCH }} --version
+
+          echo -e "\nBinary info:"
+          file bash-static-${{ env.ARCH }}
+          ls -lh bash-static-${{ env.ARCH }}
+
+          echo -e "\nLinked libraries:"
+          ldd ./bash-static-${{ env.ARCH }} 2>/dev/null || echo "Static binary (no dynamic dependencies)"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bash-static-${{ env.ARCH }}
+          path: bash-static-${{ env.ARCH }}
+
+      - name: Create release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            bash-static-${{ env.ARCH }}
+          draft: false
