@@ -103,6 +103,40 @@ jobs:
           make install
           cd ../..
 
+      - name: Create patch for bash
+        run: |
+          cat > android-bash.patch << 'EOF'
+--- complete.c.orig	2026-04-07 08:00:00.000000000 +0000
++++ complete.c	2026-04-07 08:00:00.000000000 +0000
+@@ -2283,7 +2283,7 @@
+       /* We need to reset the file pointer to the beginning of the file before
+ 	 the re-read. */
+       rewind (passwd_file);
+-      setpwent ();
++      /* setpwent (); */
+     }
+ 
+   /* If we don't have a cached copy of the user database, or we're forcing a
+@@ -2294,7 +2294,7 @@
+ #endif
+     }
+ 
+-  while (entry = getpwent ())
++  while (0) /* entry = getpwent () */
+     {
+ #if defined (HAVE_GETPWUID) && defined (HAVE_GETPWNAM)
+       if (entry->pw_uid == uid)
+@@ -2313,7 +2313,7 @@
+ 	}
+     }
+ 
+-  endpwent ();
++  /* endpwent (); */
+   if (passwd_file)
+     fclose (passwd_file);
+   passwd_file = (FILE *)NULL;
+EOF
+
       - name: Build bash (static)
         run: |
           ARCH=${{ matrix.arch }}
@@ -122,7 +156,11 @@ jobs:
           tar -xf bash-5.2.tar.gz
           cd bash-5.2
 
-          # Configure, disabling pwent functions and warning flags
+          # Apply patch to complete.c
+          cp complete.c complete.c.orig
+          patch -p0 < ../../android-bash.patch
+
+          # Configure
           ./configure \
             --host=$HOST \
             --disable-shared \
@@ -143,14 +181,6 @@ jobs:
             CFLAGS="-static -Os -fPIE -Wno-parentheses -Wno-deprecated-non-prototype -Wno-unused-command-line-argument" \
             LDFLAGS="-static -s -fPIE -L$(pwd)/../../deps/readline-8.2/install/lib -L$(pwd)/../../deps/ncurses-6.4/install/lib" \
             LIBS="-lreadline -lncursesw -ltinfo"
-
-          # Patch complete.c: comment out calls to setpwent, getpwent, endpwent
-          sed -i 's/^[[:space:]]*setpwent();/\/\* setpwent(); \*\//' complete.c
-          sed -i 's/while (entry = getpwent ())/while (0)/' complete.c
-          sed -i 's/^[[:space:]]*endpwent();/\/\* endpwent(); \*\//' complete.c
-
-          # Also patch any other potential occurrences (e.g., in bashline.c if needed)
-          # But complete.c is the main offender.
 
           make -j$(nproc) bash
           $TOOLCHAIN_PATH/bin/llvm-strip --strip-all bash
