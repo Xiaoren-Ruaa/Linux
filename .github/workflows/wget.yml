@@ -7,11 +7,11 @@ on:
       alias:
         description: '密钥别名'
         required: false
-        default: '6ef1c6c'
+        default: 'admin'
       password:
         description: '密钥密码'
         required: false
-        default: 'cheng104513'
+        default: 'admin'
 
 jobs:
   create-keystore:
