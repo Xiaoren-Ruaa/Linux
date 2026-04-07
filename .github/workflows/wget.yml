@@ -1,0 +1,142 @@
+name: Build Static wget
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        arch: [aarch64]
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup NDK
+      uses: nttld/setup-ndk@v1
+      with:
+        ndk-version: '26.1.10909125'
+
+    - name: Build wget
+      run: |
+        ARCH=${{ matrix.arch }}
+        case $ARCH in
+          aarch64)
+            HOST=aarch64-linux-android
+            TOOLCHAIN=aarch64-linux-android33
+            ;;
+        esac
+
+        NDK=$(dirname $(which ndk-build))/..
+        TOOLCHAIN_PATH=$NDK/toolchains/llvm/prebuilt/linux-x86_64
+        export PATH=$TOOLCHAIN_PATH/bin:$PATH
+
+        mkdir -p build
+        cd build
+
+        WGET_VER="1.21.4"
+        curl -L -o wget-$WGET_VER.tar.gz https://ftp.gnu.org/gnu/wget/wget-$WGET_VER.tar.gz
+        tar -xf wget-$WGET_VER.tar.gz
+        cd wget-$WGET_VER
+
+        cat > disable-cert.patch << 'EOF'
+--- a/lib/gnutls.c
++++ b/lib/gnutls.c
+@@ -76,6 +76,8 @@ gnutls_init (void)
+     return;
+ 
+   gnutls_global_init ();
++  gnutls_global_set_log_level(0);
++  gnutls_certificate_set_verify_flags (x509_cred, GNUTLS_VERIFY_DISABLE_CRL_CHECKS | GNUTLS_VERIFY_DISABLE_TIME_CHECKS);
+ }
+ 
+ /* Sets up the certificate and key files for authentication.  */
+@@ -93,7 +95,6 @@ gnutls_certificate (void)
+     gnutls_certificate_free_credentials (x509_cred);
+ 
+   gnutls_certificate_allocate_credentials (&x509_cred);
+-  gnutls_certificate_set_verify_flags (x509_cred, GNUTLS_VERIFY_DISABLE_CRL_CHECKS);
+ 
+   if (opt.cert_file)
+     gnutls_certificate_set_x509_key_file (x509_cred,
+@@ -135,9 +136,6 @@ gnutls_connect (int fd, const char *hostname)
+   /* Use default priorities.  */
+   gnutls_set_default_priority (session);
+ 
+-  /* Set the verification flags.  */
+-  gnutls_certificate_set_verify_flags (x509_cred, GNUTLS_VERIFY_DISABLE_CRL_CHECKS);
+-
+   /* Put the x509 credentials to the current session.  */
+   gnutls_credentials_set (session, GNUTLS_CRD_CERTIFICATE, x509_cred);
+ 
+@@ -164,14 +162,8 @@ gnutls_connect (int fd, const char *hostname)
+       return false;
+     }
+ 
+-  /* Verify the server's certificate.  */
+-  unsigned int status;
+-  ret = gnutls_certificate_verify_peers3 (session, hostname, &status);
+-  if (ret < 0 || status != 0)
+-    {
+-      logprintf (LOG_NOTQUIET, _("Certificate verification failed for %s.\n"), hostname);
+-      return false;
+-    }
++  // 完全跳过证书验证
++  logprintf (LOG_VERBOSE, _("Skipping certificate verification for %s.\n"), hostname);
+ 
+   return true;
+ }
+EOF
+
+        patch -p1 < disable-cert.patch
+
+        ./configure \
+          --host=$HOST \
+          --disable-shared \
+          --enable-static \
+          --with-ssl=gnutls \
+          --disable-nls \
+          --disable-iri \
+          --disable-rpath \
+          --without-libpsl \
+          --without-libiconv-prefix \
+          --without-libintl-prefix \
+          --without-libuuid \
+          --without-libidn \
+          CFLAGS="-static -Os -s -fPIE -DGNUTLS_VERIFY_DISABLE_CRL_CHECKS -DGNUTLS_VERIFY_DISABLE_TIME_CHECKS" \
+          LDFLAGS="-static -s -fPIE" \
+          CC="$TOOLCHAIN_PATH/bin/$TOOLCHAIN-clang" \
+          AR="$TOOLCHAIN_PATH/bin/llvm-ar" \
+          RANLIB="$TOOLCHAIN_PATH/bin/llvm-ranlib" \
+          STRIP="$TOOLCHAIN_PATH/bin/llvm-strip"
+
+        make -j$(nproc) wget
+
+        $TOOLCHAIN_PATH/bin/llvm-strip --strip-all src/wget
+        cp src/wget ../../wget-static-$ARCH
+
+        cd ../..
+        echo "=== Build Info ==="
+        file wget-static-$ARCH
+        ls -lh wget-static-$ARCH
+        echo "=== Test wget ==="
+        ./wget-static-$ARCH --version || true
+
+    - name: Upload Binary
+      uses: actions/upload-artifact@v4
+      with:
+        name: wget-${{ matrix.arch }}
+        path: wget-static-${{ matrix.arch }}
+
+    - name: Create Release
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          wget-static-${{ matrix.arch }}
+        draft: false
