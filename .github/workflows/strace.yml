@@ -1,0 +1,65 @@
+name: Build strace (ARM64 Static)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  build:
+    name: Build strace (ARM64)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU for multi-architecture builds
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build static strace inside ARM64 container
+        run: |
+          # 自动获取最新版本号
+          LATEST_VERSION=$(curl -s https://api.github.com/repos/strace/strace/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | sed 's/^v//')
+          echo "Latest strace version: ${LATEST_VERSION}"
+
+          docker run --rm --platform linux/arm64 -v $(pwd):/workspace -w /workspace ubuntu:22.04 bash -c "
+            # 更新源并安装编译依赖
+            apt-get update
+            apt-get install -y wget build-essential file linux-libc-dev libc6-dev
+
+            # 下载并解压源码
+            wget https://github.com/strace/strace/releases/download/v${LATEST_VERSION}/strace-${LATEST_VERSION}.tar.xz
+            tar xf strace-${LATEST_VERSION}.tar.xz
+            cd strace-${LATEST_VERSION}
+
+            # 配置全静态编译（禁用 mpers 以支持 aarch64）
+            ./configure \
+              --enable-static \
+              --disable-mpers \
+              LDFLAGS='-static'
+
+            # 编译
+            make -j\$(nproc)
+
+            # 瘦身
+            strip ./strace
+
+            # 验证静态链接
+            file ./strace | grep 'statically linked' || { echo 'Error: strace is not statically linked'; exit 1; }
+
+            # 复制到工作区
+            cp ./strace /workspace/
+          "
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: strace-static-arm64
+          path: ./strace
+          retention-days: 90
