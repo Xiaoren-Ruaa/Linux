@@ -34,9 +34,8 @@ jobs:
             tar xf strace-${LATEST_VERSION}.tar.xz && \
             cd strace-${LATEST_VERSION} && \
 
-            # 配置全静态编译（关键：只设置 LDFLAGS，不加 --enable-static）
+            # 配置全静态编译（原生 ARM64 环境，无需 --host）
             ./configure \
-              --host=aarch64-linux-gnu \
               --disable-mpers \
               LDFLAGS='-static' && \
 
