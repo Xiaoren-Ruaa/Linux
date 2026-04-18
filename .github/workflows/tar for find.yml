@@ -12,7 +12,6 @@ jobs:
       - name: Install cross-compilation toolchain
         run: |
           sudo apt-get update
-          # 安装 ARM64 交叉编译器及常用静态库
           sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu autoconf automake wget file
 
       - name: Compile static tar (ARM64)
@@ -22,7 +21,7 @@ jobs:
           tar xzf tar-${TAR_VERSION}.tar.gz
           cd tar-${TAR_VERSION}
 
-          # 修复 Bionic 类型不匹配补丁 (针对 Android 交叉编译)
+          # 修复 Bionic 类型不匹配补丁 (修正版，适配 tar-1.35)
           cat > fix-ialloc.patch << 'EOF'
           --- a/gnu/ialloc.h
           +++ b/gnu/ialloc.h
@@ -37,11 +36,12 @@ jobs:
            _GL_INLINE void *
            irealloc (void *p, idx_t s)
            {
-          -  return s <= SIZE_MAX ? realloc (p, s) : _gl_alloc_nomem ();
-          +  return s <= SIZE_MAX ? (void *) realloc (p, s) : (void *) _gl_alloc_nomem ();
+          -  return s <= SIZE_MAX ? realloc (p, s | !s) : _gl_alloc_nomem ();
+          +  return s <= SIZE_MAX ? (void *) realloc (p, s | !s) : (void *) _gl_alloc_nomem ();
            }
           EOF
-          patch -p1 < fix-ialloc.patch
+          
+          patch -p1 < fix-ialloc.patch || { echo "Patch failed, checking if already patched..."; grep -q "(void \*) malloc" gnu/ialloc.h && echo "Already patched, continuing." || exit 1; }
 
           # 配置、编译、验证、瘦身
           ./configure --host=aarch64-linux-gnu \
