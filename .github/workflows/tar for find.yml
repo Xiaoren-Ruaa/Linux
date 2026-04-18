@@ -1,0 +1,101 @@
+name: Build tar and find (ARM64 Static)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build tar & find (ARM64)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU for multi-architecture builds
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build static tar and find inside ARM64 container
+        run: |
+          # 自动获取 tar 和 findutils 的最新版本号
+          TAR_VERSION=$(curl -s https://ftp.gnu.org/gnu/tar/ | grep -oP 'tar-\K[0-9.]+(?=\.tar\.gz)' | sort -V | tail -1)
+          FIND_VERSION=$(curl -s https://ftp.gnu.org/gnu/findutils/ | grep -oP 'findutils-\K[0-9.]+(?=\.tar\.xz)' | sort -V | tail -1)
+          echo "Latest tar version: ${TAR_VERSION}"
+          echo "Latest findutils version: ${FIND_VERSION}"
+
+          docker run --rm --platform linux/arm64 -v $(pwd):/workspace -w /workspace ubuntu:22.04 bash -c "
+            # 安装基础依赖
+            apt-get update && \
+            apt-get install -y wget build-essential file autoconf automake && \
+
+            # ========== 编译 tar ==========
+            echo '=== Building tar ===' && \
+            wget https://ftp.gnu.org/gnu/tar/tar-\${TAR_VERSION}.tar.gz && \
+            tar xzf tar-\${TAR_VERSION}.tar.gz && \
+            cd tar-\${TAR_VERSION} && \
+
+            # 修复 Bionic 类型不匹配补丁
+            cat > fix-ialloc.patch << 'EOF'
+            --- a/gnu/ialloc.h
+            +++ b/gnu/ialloc.h
+            @@ -102,9 +102,9 @@
+             _GL_INLINE void *
+             imalloc (idx_t s)
+             {
+            -  return s <= SIZE_MAX ? malloc (s) : _gl_alloc_nomem ();
+            +  return s <= SIZE_MAX ? (void *) malloc (s) : (void *) _gl_alloc_nomem ();
+             }
+             
+             _GL_INLINE void *
+             irealloc (void *p, idx_t s)
+             {
+            -  return s <= SIZE_MAX ? realloc (p, s) : _gl_alloc_nomem ();
+            +  return s <= SIZE_MAX ? (void *) realloc (p, s) : (void *) _gl_alloc_nomem ();
+             }
+            EOF
+            patch -p1 < fix-ialloc.patch && \
+
+            # 配置静态编译 (tar 不产生动态库，警告可忽略)
+            FORCE_UNSAFE_CONFIGURE=1 \
+            CFLAGS='-static' \
+            LDFLAGS='-static' \
+            ./configure --prefix=/usr && \
+
+            make -j\$(nproc) && \
+            strip src/tar && \
+            file src/tar | grep 'statically linked' || { echo 'Error: tar is not static'; exit 1; } && \
+            cp src/tar /workspace/tar-static-arm64 && \
+            cd /workspace && rm -rf tar-\${TAR_VERSION}* && \
+
+            # ========== 编译 find ==========
+            echo '=== Building find ===' && \
+            wget https://ftp.gnu.org/gnu/findutils/findutils-\${FIND_VERSION}.tar.xz && \
+            tar xJf findutils-\${FIND_VERSION}.tar.xz && \
+            cd findutils-\${FIND_VERSION} && \
+
+            CFLAGS='-static' LDFLAGS='-static' ./configure --prefix=/usr && \
+            make -j\$(nproc) && \
+            strip find/find && \
+            file find/find | grep 'statically linked' || { echo 'Error: find is not static'; exit 1; } && \
+            cp find/find /workspace/find-static-arm64 && \
+            cd /workspace && rm -rf findutils-\${FIND_VERSION}* && \
+
+            echo 'Both builds succeeded.'
+          "
+
+      - name: Upload tar artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tar-static-arm64
+          path: ./tar-static-arm64
+          retention-days: 90
+
+      - name: Upload find artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: find-static-arm64
+          path: ./find-static-arm64
+          retention-days: 90
