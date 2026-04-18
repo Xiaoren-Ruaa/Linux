@@ -22,11 +22,13 @@ jobs:
         run: |
           TAR_VERSION="1.35"
           FIND_VERSION="4.10.0"
-          echo "Using tar version: ${TAR_VERSION}"
-          echo "Using findutils version: ${FIND_VERSION}"
+          CONTAINER_NAME="builder-arm64-$(date +%s)"
 
-          # 使用 GITHUB_WORKSPACE 确保文件映射正确
-          docker run --rm --platform linux/arm64 -v $GITHUB_WORKSPACE:/workspace -w /workspace ubuntu:22.04 bash -c "
+          # 启动容器并保持运行
+          docker run -d --rm --platform linux/arm64 --name $CONTAINER_NAME ubuntu:22.04 sleep infinity
+
+          # 在容器内执行编译脚本
+          docker exec $CONTAINER_NAME bash -c "
             apt-get update && \
             apt-get install -y wget build-essential file autoconf automake && \
 
@@ -65,8 +67,9 @@ jobs:
             make -j\$(nproc) && \
             strip src/tar && \
             file src/tar | grep 'statically linked' || { echo 'Error: tar is not static'; exit 1; } && \
-            cp src/tar /workspace/tar-static-arm64 && \
-            cd /workspace && rm -rf tar-${TAR_VERSION}* && \
+            cp src/tar /tmp/tar-static-arm64 && \
+
+            cd / && rm -rf tar-${TAR_VERSION}* && \
 
             # ========== 编译 find ==========
             echo '=== Building find ===' && \
@@ -78,36 +81,36 @@ jobs:
             make -j\$(nproc) && \
             strip find/find && \
             file find/find | grep 'statically linked' || { echo 'Error: find is not static'; exit 1; } && \
-            cp find/find /workspace/find-static-arm64 && \
-            cd /workspace && rm -rf findutils-${FIND_VERSION}* && \
+            cp find/find /tmp/find-static-arm64 && \
+
+            cd / && rm -rf findutils-${FIND_VERSION}* && \
 
             echo 'Both builds succeeded.'
           "
 
-      - name: Verify artifacts exist
+          # 从容器中复制产物到宿主机
+          docker cp $CONTAINER_NAME:/tmp/tar-static-arm64 ./tar-static-arm64
+          docker cp $CONTAINER_NAME:/tmp/find-static-arm64 ./find-static-arm64
+
+          # 停止并删除容器
+          docker stop $CONTAINER_NAME
+
+      - name: Verify artifacts
         run: |
-          echo "Checking for artifacts in workspace:"
-          ls -la $GITHUB_WORKSPACE/
-          if [ ! -f "$GITHUB_WORKSPACE/tar-static-arm64" ]; then
-            echo "ERROR: tar-static-arm64 not found"
-            exit 1
-          fi
-          if [ ! -f "$GITHUB_WORKSPACE/find-static-arm64" ]; then
-            echo "ERROR: find-static-arm64 not found"
-            exit 1
-          fi
-          chmod +x $GITHUB_WORKSPACE/tar-static-arm64 $GITHUB_WORKSPACE/find-static-arm64
+          ls -la
+          file ./tar-static-arm64
+          file ./find-static-arm64
 
       - name: Upload tar artifact
         uses: actions/upload-artifact@v4
         with:
           name: tar-static-arm64
-          path: ${{ github.workspace }}/tar-static-arm64
+          path: ./tar-static-arm64
           retention-days: 90
 
       - name: Upload find artifact
         uses: actions/upload-artifact@v4
         with:
           name: find-static-arm64
-          path: ${{ github.workspace }}/find-static-arm64
+          path: ./find-static-arm64
           retention-days: 90
