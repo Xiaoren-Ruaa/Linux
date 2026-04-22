@@ -44,6 +44,10 @@ src_archive="${work_dir}/Python-${PYTHON_VERSION}.tar.xz"
 native_src="${work_dir}/Python-${PYTHON_VERSION}-native"
 cross_src="${work_dir}/Python-${PYTHON_VERSION}-cross"
 native_prefix="${work_dir}/native"
+xz_version="${XZ_VERSION:-5.6.4}"
+xz_archive="${work_dir}/xz-${xz_version}.tar.xz"
+xz_src="${work_dir}/xz-${xz_version}"
+target_deps_prefix="${work_dir}/target-deps"
 
 ndk_setup_env "${ANDROID_API:-21}" "aarch64"
 
@@ -106,7 +110,43 @@ native_python="${native_prefix}/bin/python3"
 [[ -f "$native_python" ]] || fail "Native Python not built: $native_python"
 
 # ------------------------------------------------------------------
-# 4. Cross-compile CPython for aarch64-linux-android<API>
+# 4. Build target-side liblzma
+#
+#   The runner has host liblzma development files installed, so
+#   CPython's configure would otherwise pick up the host pkg-config
+#   result and later fail when the Android compiler cannot find the
+#   target headers. Build a target-side static PIC liblzma and point
+#   LIBLZMA_CFLAGS / LIBLZMA_LIBS at it explicitly.
+# ------------------------------------------------------------------
+log_step "Building liblzma ${xz_version} for aarch64-linux-android${ANDROID_API}"
+
+download_file \
+  "https://tukaani.org/xz/xz-${xz_version}.tar.xz" \
+  "$xz_archive"
+extract_archive "$xz_archive" "$work_dir"
+[[ -d "$xz_src" ]] || fail "Expected xz source directory not found: ${xz_src}"
+
+(
+  pushd "$xz_src" >/dev/null
+
+  CFLAGS="${CFLAGS:-} -fPIC" \
+  ./configure \
+    --host="aarch64-linux-android${ANDROID_API}" \
+    --build="x86_64-linux-gnu" \
+    --prefix="$target_deps_prefix" \
+    --disable-shared \
+    --enable-static
+
+  make -j"$(nproc)" --no-print-directory
+  make install --no-print-directory
+  popd >/dev/null
+)
+
+export LIBLZMA_CFLAGS="-I${target_deps_prefix}/include"
+export LIBLZMA_LIBS="-L${target_deps_prefix}/lib -llzma"
+
+# ------------------------------------------------------------------
+# 5. Cross-compile CPython for aarch64-linux-android<API>
 #
 #   CPython 3.13 treats the <API>-suffixed host triplet as Android and
 #   adjusts build flags accordingly (Bionic libc linkage, no fork,
@@ -122,18 +162,12 @@ native_python="${native_prefix}/bin/python3"
 #     --disable-test-modules
 #       Skip building _testcapi, _testinternalcapi and friends.
 #       These are not needed at runtime and add build time.
+#     LIBLZMA_CFLAGS / LIBLZMA_LIBS
+#       Force CPython's _lzma probe to use the target-side liblzma we
+#       just built instead of the runner's host pkg-config result.
 #     ac_cv_file__dev_ptmx / ac_cv_file__dev_ptc
 #       Bionic does not provide these devices; suppress the autoconf
 #       checks that would otherwise fail at configure time.
-#     py_cv_module__lzma=disabled
-#       Python 3.13 uses pkg-config in cross-compilation mode; the
-#       GitHub Actions ubuntu runner has liblzma-dev installed, so
-#       configure (via the host pkg-config) reports _lzma as available
-#       even though the NDK sysroot does not include lzma.h.  The
-#       per-module cache variable py_cv_module__lzma is used by
-#       Python 3.13's PY_STDLIB_MOD macro; setting it to "disabled"
-#       prevents the module from being included in Modules/Setup.stdlib
-#       and therefore from being compiled.
 # ------------------------------------------------------------------
 log_step "Cross-compiling CPython ${PYTHON_VERSION} → aarch64-linux-android${ANDROID_API}"
 pushd "$cross_src" >/dev/null
@@ -149,22 +183,21 @@ INSTALL_PREFIX="/data/local/python"
   --disable-test-modules \
   --disable-ipv6 \
   ac_cv_file__dev_ptmx=no \
-  ac_cv_file__dev_ptc=no \
-  py_cv_module__lzma=disabled
+  ac_cv_file__dev_ptc=no
 
 make -j"$(nproc)"
 
 popd >/dev/null
 
 # ------------------------------------------------------------------
-# 5. Verify and strip
+# 6. Verify and strip
 # ------------------------------------------------------------------
 python_bin="${cross_src}/python"
 ndk_check_binary "$python_bin"
 "$STRIP" --strip-unneeded "$python_bin"
 
 # ------------------------------------------------------------------
-# 6. Collect standard library
+# 7. Collect standard library
 #    We install to a staging dir, then repack without the large test/
 #    trees and other optional cruft.
 # ------------------------------------------------------------------
@@ -207,7 +240,7 @@ BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
 
 # ------------------------------------------------------------------
-# 7. Package
+# 8. Package
 # ------------------------------------------------------------------
 archive_path="${output_dir}/${artifact_name}-${PYTHON_VERSION}.tar.gz"
 tar -czf "$archive_path" -C "$output_dir" python
