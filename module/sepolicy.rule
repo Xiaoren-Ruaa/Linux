@@ -1,0 +1,3 @@
+allow { shell system_app } system_lib_file file { execute execute_no_trans open read }
+allow { shell system_app } block_device dir { search }
+allow { shell system_app } block_device blk_file { getattr read open }

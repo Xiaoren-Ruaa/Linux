@@ -1,4 +1,4 @@
-name: Fill History (Daily Auto + Manual Batch)
+name: Fill Commit History
 
 on:
   schedule:

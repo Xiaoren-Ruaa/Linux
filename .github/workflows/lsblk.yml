@@ -1,4 +1,4 @@
-name: Build NDK-Native lsblk (Final Fix v5)
+name: Build NDK-Native lsblk
 
 on:
   workflow_dispatch:

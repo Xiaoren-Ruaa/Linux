@@ -140,7 +140,9 @@ INSTALL_PREFIX="/data/local/python"
   --disable-test-modules \
   --disable-ipv6 \
   ac_cv_file__dev_ptmx=no \
-  ac_cv_file__dev_ptc=no
+  ac_cv_file__dev_ptc=no \
+  ac_cv_header_lzma_h=no \
+  ac_cv_lib_lzma_lzma_version_number=no
 
 make -j"$(nproc)"
 

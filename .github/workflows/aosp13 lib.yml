@@ -1,4 +1,4 @@
-name: Rebuild Four Core Libs Only (System Replacement)
+name: Build AOSP13 Core System Libs
 
 on:
   workflow_dispatch:

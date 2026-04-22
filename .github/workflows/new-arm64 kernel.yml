@@ -1,4 +1,4 @@
-name: Build Latest Linux ARM64 Kernel (QEMU virt + full virtio)
+name: Build ARM64 Kernel (QEMU virt)
 
 on:
   workflow_dispatch:

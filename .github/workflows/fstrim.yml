@@ -1,4 +1,4 @@
-name: Build Ultimate Static fstrim
+name: Build Static fstrim
 
 on:
   workflow_dispatch:

@@ -1,4 +1,4 @@
-name: Manual Build e2fsprogs Static
+name: Build Static e2fsprogs
 on: 
   workflow_dispatch:
 

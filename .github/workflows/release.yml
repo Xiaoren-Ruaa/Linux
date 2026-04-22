@@ -1,0 +1,270 @@
+name: Build and Publish Release
+
+# Builds all Bionic (Android) artifacts in parallel, then assembles
+# them into a single Magisk module zip (Linux.Command.Expansion.zip)
+# matching the upstream 6ef1c6c/Linux release format.
+#
+# Zip layout:
+#   module.prop
+#   customize.sh
+#   post-fs-data.sh
+#   service.sh
+#   sepolicy.rule
+#   system/bin/   ← all compiled binaries land here
+#   system/lib64/ ← shared libraries (if any)
+#
+# Usage:
+#   gh workflow run release.yml \
+#     -f version=1.5.0 \
+#     -f modules=all
+#   gh workflow run release.yml \
+#     -f version=1.5.0 \
+#     -f modules=node,python
+#
+# Supported module values (comma-separated or "all"):
+#   node    – Node.js binary linked against Android Bionic/aarch64
+#   python  – CPython 3.x binary linked against Android Bionic/aarch64
+#   bash    – static Bash for ARM64
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version string (e.g. 1.5.0 → tag Linux.Command.Expansion150)"
+        required: true
+        default: ""
+      modules:
+        description: 'Modules to include: "all" or comma-separated (node,python,bash)'
+        required: false
+        default: "all"
+      prerelease:
+        description: "Mark as pre-release"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+jobs:
+  # ── RESOLVE which modules to build ───────────────────────────────────
+  resolve:
+    name: Resolve build matrix
+    runs-on: ubuntu-22.04
+    outputs:
+      build_node:   ${{ steps.sel.outputs.node }}
+      build_python: ${{ steps.sel.outputs.python }}
+      build_bash:   ${{ steps.sel.outputs.bash }}
+    steps:
+      - id: sel
+        run: |
+          MODULES="${{ inputs.modules }}"
+          for m in node python bash; do
+            if [[ "$MODULES" == "all" ]] || echo "$MODULES" | grep -qw "$m"; then
+              echo "${m}=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "${m}=false" >> "$GITHUB_OUTPUT"
+            fi
+          done
+
+  # ── BUILD: Node.js Bionic ─────────────────────────────────────────────
+  build_node:
+    name: "Build: Node.js (Android Bionic)"
+    needs: resolve
+    if: needs.resolve.outputs.build_node == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install host build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential g++ ninja-build python3 git
+      - name: Build Node.js for Android
+        run: |
+          bash scripts/packages/build-android-bionic-node.sh \
+            manifests/android-bionic-node.env
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bin-node
+          path: dist/android-bionic-node/*.tar.gz
+          retention-days: 1
+
+  # ── BUILD: Python Bionic ──────────────────────────────────────────────
+  build_python:
+    name: "Build: Python (Android Bionic)"
+    needs: resolve
+    if: needs.resolve.outputs.build_python == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install host build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential libssl-dev libffi-dev zlib1g-dev pkg-config python3
+      - name: Build Python for Android
+        run: |
+          bash scripts/packages/build-android-bionic-python.sh \
+            manifests/android-bionic-python.env
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bin-python
+          path: dist/android-bionic-python/*.tar.gz
+          retention-days: 1
+
+  # ── BUILD: Bash ───────────────────────────────────────────────────────
+  build_bash:
+    name: "Build: Static Bash (ARM64)"
+    needs: resolve
+    if: needs.resolve.outputs.build_bash == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install host build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential gcc-aarch64-linux-gnu
+      - name: Build static Bash
+        run: bash scripts/packages/build-bash-static.sh manifests/bash.env
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bin-bash
+          path: dist/bash-static/*.tar.gz
+          retention-days: 1
+
+  # ── ASSEMBLE & PUBLISH ────────────────────────────────────────────────
+  publish:
+    name: Assemble Magisk module and publish release
+    runs-on: ubuntu-22.04
+    needs:
+      - resolve
+      - build_node
+      - build_python
+      - build_bash
+    # Run even when some build jobs were skipped (subset of modules)
+    if: |
+      always() &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all binary artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bin-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Assemble Magisk module
+        run: |
+          set -euo pipefail
+          VERSION="${{ inputs.version }}"
+
+          MODDIR="$(mktemp -d)/module"
+          mkdir -p "${MODDIR}/system/bin" "${MODDIR}/system/lib64"
+
+          # ── Copy Magisk module skeleton ──────────────────────────────
+          cp module/module.prop   "${MODDIR}/module.prop"
+          cp module/customize.sh  "${MODDIR}/customize.sh"
+          cp module/sepolicy.rule "${MODDIR}/sepolicy.rule"
+
+          # Write post-fs-data.sh and service.sh inline
+          printf '#!/system/bin/sh\nsu -c "setenforce 0"\n' \
+            > "${MODDIR}/post-fs-data.sh"
+          printf '#!/system/bin/sh\nsu -c "setenforce 1"\n' \
+            > "${MODDIR}/service.sh"
+
+          # Update version in module.prop
+          sed -i "s/^version=.*/version=v${VERSION}/" "${MODDIR}/module.prop"
+          # versionCode: strip dots → integer (e.g. 1.5.0 → 150)
+          VCODE="$(echo "$VERSION" | tr -d '.')"
+          sed -i "s/^versionCode=.*/versionCode=${VCODE}/" "${MODDIR}/module.prop"
+
+          # ── Extract binaries from each tar.gz ────────────────────────
+          TMPEXT="$(mktemp -d)"
+          for tarball in artifacts/*.tar.gz; do
+            [[ -f "$tarball" ]] || continue
+            echo "Extracting: $tarball"
+            tar -xf "$tarball" -C "$TMPEXT"
+          done
+
+          # Copy all executable ELF binaries into system/bin/
+          # (any file that is executable and is an ELF aarch64 binary)
+          find "$TMPEXT" -type f \( \
+              -name "node" \
+              -o -name "python3" -o -name "python" \
+              -o -name "bash" \
+              -o -name "npm" -o -name "npx" \
+          \) | while read -r bin; do
+            echo "  → system/bin/$(basename "$bin")"
+            install -m 0755 "$bin" "${MODDIR}/system/bin/$(basename "$bin")"
+          done
+
+          # Copy .so shared libraries into system/lib64/
+          find "$TMPEXT" -type f -name "*.so" | while read -r lib; do
+            echo "  → system/lib64/$(basename "$lib")"
+            install -m 0644 "$lib" "${MODDIR}/system/lib64/$(basename "$lib")" || true
+          done
+
+          # ── Summary ──────────────────────────────────────────────────
+          echo "Binaries in system/bin/:"
+          ls -lh "${MODDIR}/system/bin/"
+          echo ""
+          echo "module.prop:"
+          cat "${MODDIR}/module.prop"
+
+          # ── Create zip (Magisk expects zip, not tar.gz) ───────────────
+          sudo apt-get install -y --no-install-recommends zip > /dev/null 2>&1
+          OUT_ZIP="${GITHUB_WORKSPACE}/Linux.Command.Expansion.zip"
+          (cd "$MODDIR" && zip -r9 "$OUT_ZIP" .)
+          ls -lh "$OUT_ZIP"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ inputs.version }}"
+          VCODE="$(echo "$VERSION" | tr -d '.')"
+          TAG="Linux.Command.Expansion${VCODE}"
+          PRERELEASE="${{ inputs.prerelease }}"
+
+          PRERELEASE_FLAG=""
+          [[ "$PRERELEASE" == "true" ]] && PRERELEASE_FLAG="--prerelease"
+
+          # List what's inside the zip for release notes
+          BINS="$(zipinfo -1 Linux.Command.Expansion.zip 'system/bin/*' 2>/dev/null \
+                  | sed 's|system/bin/||' | sort | tr '\n' ' ')" || \
+          BINS="$(python3 -c "
+          import zipfile
+          z = zipfile.ZipFile('Linux.Command.Expansion.zip')
+          names = [n.replace('system/bin/','') for n in z.namelist() if n.startswith('system/bin/') and not n.endswith('/')]
+          print(' '.join(sorted(names)))
+          ")"
+
+          NOTES="## 包含工具
+
+          ${BINS}
+
+          ## 说明
+
+          Magisk 模块（适用于 Android aarch64）。安装后工具位于 \`/system/bin/\`。
+
+          由 GitHub Actions 在 \`ubuntu-22.04\` 上构建，使用 Android NDK。"
+
+          gh release create "$TAG" \
+            --title "Linux Command Expansion v${VERSION}" \
+            --notes "$NOTES" \
+            $PRERELEASE_FLAG \
+            Linux.Command.Expansion.zip

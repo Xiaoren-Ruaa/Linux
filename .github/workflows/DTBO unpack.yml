@@ -1,4 +1,4 @@
-name: DTBO unpack
+name: Unpack DTBO Image
 
 on:
   workflow_dispatch:

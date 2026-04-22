@@ -1,4 +1,4 @@
-name: 创建APK签名密钥库
+name: Generate APK Signing Keystore
 
 on:
   # 手动触发
