@@ -14,8 +14,8 @@ jobs:
 
       - name: Install NDK
         run: |
-          # 下载最新版本的 Android NDK
-          wget -q https://dl.google.com/android/repository/android-ndk-latest-linux.zip
+          # 使用 curl 代替 wget 以确保可以下载
+          curl -L -o android-ndk-latest-linux.zip https://dl.google.com/android/repository/android-ndk-latest-linux.zip
           unzip -q android-ndk-latest-linux.zip
           echo "NDK_PATH=$GITHUB_WORKSPACE/android-ndk" >> $GITHUB_ENV
 
